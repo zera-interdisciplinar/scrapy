@@ -1,0 +1,3 @@
+-- Admin seeding happens in Go (cmd/scrapy/seed.go), not here: the password must be
+-- argon2id-hashed in the app, printed once to the boot log, and never committed as SQL.
+-- This file exists only so migration numbering stays contiguous for future schema changes.

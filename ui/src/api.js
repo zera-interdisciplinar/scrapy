@@ -1,0 +1,23 @@
+async function call(path, opts = {}) {
+  const res = await fetch(path, {
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    ...opts,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || res.statusText);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+export const api = {
+  login: (email, password) =>
+    call("/v1/auth/login", { method: "POST", body: JSON.stringify({ Email: email, Password: password }) }),
+  listEntries: (scope, env) => call(`/v1/admin/entries?scope=${scope}&env=${env}`),
+  setEntry: (body) => call("/v1/admin/entries", { method: "PUT", body: JSON.stringify(body) }),
+  kill: (scope, env) => call(`/v1/admin/kill/${scope}?env=${env}`, { method: "POST" }),
+  audit: () => call("/v1/admin/audit"),
+  createKey: (scope, env) => call("/v1/admin/keys", { method: "POST", body: JSON.stringify({ Scope: scope, Env: env }) }),
+};
