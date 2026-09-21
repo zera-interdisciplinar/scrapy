@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: scrapy-postgres-pvc
+  namespace: qa
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scrapy-postgres
+  namespace: qa
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # PVC ReadWriteOnce: nunca dois pods de banco ao mesmo tempo
+  selector:
+    matchLabels:
+      app: scrapy-postgres
+  template:
+    metadata:
+      labels:
+        app: scrapy-postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        ports:
+        - containerPort: 5432
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        readinessProbe:
+          exec:
+            command: ["pg_isready", "-U", "scrapy"]
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        env:
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: scrapy-postgres-secrets
+              key: POSTGRES_DB
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: scrapy-postgres-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: scrapy-postgres-secrets
+              key: POSTGRES_PASSWORD
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+          subPath: pgdata
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: scrapy-postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scrapy-postgres
+  namespace: qa
+spec:
+  selector:
+    app: scrapy-postgres
+  ports:
+    - protocol: TCP
+      port: 5432
+      targetPort: 5432
+  type: ClusterIP
