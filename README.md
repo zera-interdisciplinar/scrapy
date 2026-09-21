@@ -1,8 +1,13 @@
 # scrapy
 
+> ⚠️ **Projeto gerado integralmente por IA (Claude Code).** Todo o código deste
+> repositório — backend, UI, SDKs e manifests k8s — foi escrito por um agente de IA a
+> partir de um plano revisado por humano, sem edição manual linha a linha. Trate como POC:
+> revise com atenção antes de usar em produção, especialmente as partes de segurança
+> (criptografia de secrets, auth, RBAC).
+
 Plataforma de configuração ao vivo (feature flags, kill-switches, conteúdo segmentado) para
-os serviços do workspace e para o app mobile. Ver plano completo em
-`/home/gustavo/.claude/plans/voc-j-tem-contexto-ticklish-pony.md`.
+os serviços do workspace e para o app mobile.
 
 ## Stack
 
@@ -49,4 +54,4 @@ Ver árvore completa e modelo de dados no plano. Resumo:
 - `internal/eval` — avaliação de regras de segmentação (mobile)
 - `internal/auth` — argon2id, JWT de sessão, API keys
 - `sdk/java`, `sdk/python` — clientes para os serviços do workspace
-- `k8s/` — manifests padrão do workspace (deployment-qa, service-qa, PDB)
+- `k8s/` — manifests padrão do workspace (`*-qa.yaml` para qa, sem sufixo para production, PDB)
