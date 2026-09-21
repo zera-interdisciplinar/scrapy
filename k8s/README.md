@@ -5,7 +5,7 @@ Secrets criados manualmente (uma vez), no mesmo padrão dos outros serviços do 
 
 ## 1. `scrapy-postgres-secrets`
 
-Credenciais do Postgres próprio do scrapy (`postgres-qa.yaml` / `postgres-prod.yaml`).
+Credenciais do Postgres próprio do scrapy (`postgres-qa.yaml` (qa) / `postgres.yaml` (production)).
 
 ```sh
 # QA
@@ -23,7 +23,7 @@ kubectl create secret generic scrapy-postgres-secrets -n production \
 
 ## 2. `scrapy-secrets`
 
-Consumido pelo `Deployment scrapy` (`deployment-qa.yaml` / `deployment-prod.yaml`).
+Consumido pelo `Deployment scrapy` (`deployment-qa.yaml` (qa) / `deployment.yaml` (production)).
 
 | chave                       | obrigatória | o que é |
 |------------------------------|------|---------|
@@ -52,11 +52,13 @@ escreva uma migração de re-encriptação.
 
 ## Ordem de deploy
 
-1. `postgres-{qa,prod}.yaml` (PVC + Postgres + Service) — precisa estar de pé e `Ready`
-   antes do scrapy, que falha o boot se não conseguir conectar (comportamento pretendido:
-   ver plano, "subir um pod com configuração errada é pior do que não subir").
+1. `postgres-qa.yaml` (qa) / `postgres.yaml` (production) — PVC + Postgres + Service,
+   precisa estar de pé e `Ready` antes do scrapy, que falha o boot se não conseguir
+   conectar (comportamento pretendido: ver plano, "subir um pod com configuração errada
+   é pior do que não subir").
 2. Secrets acima.
-3. `deployment-{qa,prod}.yaml` + `service-{qa,prod}.yaml`.
+3. `deployment-qa.yaml` + `service-qa.yaml` (qa) / `deployment.yaml` + `service.yaml`
+   (production).
 4. Rota no `infra-gtw-kong` (`manifests/{qa,prod}/scrapy.yaml`).
 
 O scrapy sobe **antes** de qualquer serviço cliente (`ms-inventory`,
