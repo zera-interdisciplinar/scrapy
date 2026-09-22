@@ -39,6 +39,10 @@ func main() {
 		log.Fatalf("seed admin: %v", err)
 	}
 
+	if backupDSN := os.Getenv("BACKUP_DB_DSN"); backupDSN != "" {
+		go store.StartMirror(ctx, st.Pool, backupDSN, masterKey)
+	}
+
 	h := hub.New()
 	go h.ListenNotify(ctx, st.Pool, func(scopeID, envID string) (string, string, bool) {
 		return st.ResolveNames(ctx, scopeID, envID)

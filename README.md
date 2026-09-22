@@ -55,3 +55,12 @@ Ver árvore completa e modelo de dados no plano. Resumo:
 - `internal/auth` — argon2id, JWT de sessão, API keys
 - `sdk/java`, `sdk/python` — clientes para os serviços do workspace
 - `k8s/` — manifests padrão do workspace (`*-qa.yaml` para qa, sem sufixo para production, PDB)
+
+## Backup de credenciais
+
+Se `BACKUP_DB_DSN` estiver setada, toda escrita no Postgres primário é espelhada para um
+segundo Postgres, num ambiente isolado (ver `k8s/README.md`). O espelho roda via uma fila
+outbox no primário (trigger em cada tabela + worker em Go, `internal/store/mirror.go`):
+nenhum código de escrita precisou mudar, e uma falha no banco de backup não afeta o serviço —
+o worker acumula e tenta de novo a cada 5s até conseguir aplicar. Sem `BACKUP_DB_DSN`, o
+mirror fica desligado (comportamento padrão em dev local).
