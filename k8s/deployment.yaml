@@ -70,6 +70,14 @@ spec:
               name: scrapy-secrets
               key: SCRAPY_BOOTSTRAP_PASSWORD
               optional: true
+        # DSN of an isolated backup Postgres every write is mirrored to (credential-loss
+        # protection). Absent = mirror disabled, primary boots and serves normally either way.
+        - name: BACKUP_DB_DSN
+          valueFrom:
+            secretKeyRef:
+              name: scrapy-secrets
+              key: BACKUP_DB_DSN
+              optional: true
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget

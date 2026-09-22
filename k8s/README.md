@@ -31,6 +31,7 @@ Consumido pelo `Deployment scrapy` (`deployment-qa.yaml` (qa) / `deployment.yaml
 | `SCRAPY_MASTER_KEY`          | sim  | 32 bytes em base64, chave AES-256 para os `entries` marcados `secret=true` |
 | `SCRAPY_SESSION_SECRET`      | sim  | segredo HMAC do JWT de sessão da UI admin |
 | `SCRAPY_BOOTSTRAP_PASSWORD`  | não  | senha do admin no primeiro boot; sem ela o scrapy gera uma e imprime **uma vez** no log |
+| `BACKUP_DB_DSN`              | não  | DSN de um segundo Postgres, em ambiente isolado, para onde toda escrita é espelhada (proteção contra perda de credenciais). Sem ela o mirror fica desligado. |
 
 ```sh
 # QA
@@ -49,6 +50,19 @@ kubectl create secret generic scrapy-secrets -n production \
 `SCRAPY_MASTER_KEY` **não pode ser rotacionada sem re-cifrar** todo `entries.value` marcado
 `secret=true` — se precisar trocar, faça isso antes de qualquer entry secreta existir, ou
 escreva uma migração de re-encriptação.
+
+`BACKUP_DB_DSN` aponta para um Postgres **separado** do `scrapy-postgres` acima — outro
+namespace/cluster/projeto, para que a perda do banco primário não leve o backup junto. O
+scrapy roda as mesmas migrations nele e espelha toda escrita (via outbox, `internal/store/mirror.go`);
+não precisa de setup manual de schema, só o banco existir e aceitar conexão.
+
+```sh
+kubectl create secret generic scrapy-secrets -n production \
+  --from-literal=DB_DSN='...' \
+  --from-literal=SCRAPY_MASTER_KEY='...' \
+  --from-literal=SCRAPY_SESSION_SECRET='...' \
+  --from-literal=BACKUP_DB_DSN='postgres://scrapy:<senha>@<host-isolado>:5432/scrapy_backup?sslmode=require'
+```
 
 ## Ordem de deploy
 
