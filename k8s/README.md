@@ -78,6 +78,37 @@ kubectl create secret generic scrapy-secrets -n production \
 O scrapy sobe **antes** de qualquer serviço cliente (`ms-inventory`,
 `ms-administrative-core`, ...) que dependa dele no boot — ver fase 5 do plano.
 
+## Quem deve apontar para qual deployment do scrapy
+
+O scrapy tem **dois** deployments (`qa` e `production`), cada um com Postgres próprio e
+isolado — bancos completamente diferentes, não é a mesma fonte de dado filtrada por
+ambiente. Isso existe só pra validar mudança no **código do scrapy** antes de promover pra
+produção (o mesmo padrão de qualquer outro serviço do workspace).
+
+Dentro do scrapy, o ambiente (`qa`/`prod`) já é modelado por entry
+(`entries.env_id` — ver `internal/store/store.go`) e por api key escopada
+(`api_keys.env_id`). Uma única instância — a de **produção** — já serve os dois ambientes:
+uma chave criada com `Env=qa` só enxerga entries `qa`, uma com `Env=prod` só enxerga
+`prod`. O dado é o mesmo Postgres, só filtrado.
+
+Por isso:
+
+| Quem | Aponta para | Env usado na api key |
+|---|---|---|
+| `ms-x` rodando em `qa` | `scrapy` do namespace **production** | `qa` |
+| `ms-x` rodando em `production` | `scrapy` do namespace **production** | `prod` |
+| Pipeline de CI/QA do **próprio scrapy** | `scrapy-qa` (namespace `qa`) | — (é o alvo do teste, não um consumidor) |
+
+**Nunca** aponte um `ms-x` de `qa` para o `scrapy` do namespace `qa`. Por padrão, resolução
+de DNS interna do k8s prefere o Service do mesmo namespace — se o Helm chart de um serviço
+cliente não fixar explicitamente o host/namespace do scrapy de produção, ele cai nessa
+armadilha silenciosamente: passa a ler de um banco isolado, sem sincronia com produção,
+sem alertar ninguém. O sintoma é "kill switch/flag mudou no admin mas o serviço não
+percebeu" — porque o serviço nunca estava lendo do banco onde a mudança foi feita.
+
+Configure o host do scrapy nos manifests de `ms-x` como o FQDN completo do Service em
+`production` (ex: `scrapy.production.svc.cluster.local`), nunca `scrapy` puro.
+
 ## Por que não StatefulSet para o Postgres
 
 Réplica única, `PersistentVolumeClaim` `ReadWriteOnce`, `strategy: Recreate`: é o mesmo

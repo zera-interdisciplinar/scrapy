@@ -19,6 +19,7 @@ import (
 var mirrorTables = map[string]bool{
 	"environments": true, "scopes": true, "entries": true, "entry_versions": true,
 	"users": true, "api_keys": true, "audit_log": true, "instances": true,
+	"revoked_sessions": true,
 }
 
 type outboxRow struct {

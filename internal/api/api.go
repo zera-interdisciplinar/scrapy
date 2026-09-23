@@ -31,18 +31,28 @@ func (s *Server) Routes() *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery(), gin.Logger())
 
+	loginLimiter := newRateLimiter(10, time.Minute)    // brute-force guard on password auth
+	evaluateLimiter := newRateLimiter(120, time.Minute) // per-IP, mobile clients poll this
+
 	r.GET("/v1/healthz", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
-	r.POST("/v1/auth/login", s.handleLogin)
+	r.POST("/v1/auth/login", loginLimiter.middleware(), s.handleLogin)
+	r.POST("/v1/auth/logout", s.sessionAuth(roleViewer), s.handleLogout)
+	r.GET("/v1/auth/me", s.sessionAuth(roleViewer), s.handleMe)
 
 	sdk := r.Group("/v1", s.apiKeyAuth())
 	sdk.GET("/bootstrap", s.handleBootstrap)
 	sdk.GET("/connect", s.handleConnect)
 
-	r.POST("/v1/evaluate", s.handleEvaluate)
+	// mobile: same api-key mechanism as the SDKs, not a free-form scope in the body — a
+	// client key is meant to be embedded in a public app (anyone can extract it), so the
+	// key only ever grants read on the one scope/env it was minted for, and the endpoint
+	// is rate-limited per IP on top of that.
+	r.POST("/v1/evaluate", evaluateLimiter.middleware(), s.apiKeyAuth(), s.handleEvaluate)
 
 	admin := r.Group("/v1/admin", s.sessionAuth(roleViewer))
 	admin.GET("/entries", s.handleListEntries)
 	admin.GET("/audit", s.handleAudit)
+	admin.GET("/scopes", s.handleListScopes)
 
 	editors := r.Group("/v1/admin", s.sessionAuth(roleEditor))
 	editors.PUT("/entries", s.handleSetEntry)
@@ -50,6 +60,7 @@ func (s *Server) Routes() *gin.Engine {
 
 	admins := r.Group("/v1/admin", s.sessionAuth(roleAdmin))
 	admins.POST("/keys", s.handleCreateKey)
+	admins.POST("/keys/:prefix/revoke", s.handleRevokeKey)
 
 	if s.UI != nil {
 		r.NoRoute(gin.WrapH(http.FileServer(s.UI)))
@@ -79,14 +90,42 @@ func (s *Server) sessionAuth(minRole string) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
+		revoked, err := s.Store.IsSessionRevoked(c.Request.Context(), claims.ID)
+		if err != nil || revoked {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
 		if roleRank[claims.Role] < roleRank[minRole] {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return
 		}
 		c.Set("uid", claims.UserID)
 		c.Set("role", claims.Role)
+		c.Set("jti", claims.ID)
+		c.Set("exp", claims.ExpiresAt.Time)
 		c.Next()
 	}
+}
+
+// requireScopeAccess blocks editors/admins from writing to a scope outside their
+// allowed_scopes list. nil/empty list means unrestricted (the bootstrap admin, or an
+// operator who legitimately needs cross-service access).
+func (s *Server) requireScopeAccess(c *gin.Context, scope string) bool {
+	allowed, err := s.Store.AllowedScopes(c.Request.Context(), c.GetString("uid"))
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return false
+	}
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, sc := range allowed {
+		if sc == scope {
+			return true
+		}
+	}
+	c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden: no access to scope " + scope})
+	return false
 }
 
 // apiKeyAuth authenticates SDK calls. Keys are read-only by construction: there is no
@@ -143,6 +182,29 @@ func (s *Server) handleLogin(c *gin.Context) {
 	c.SetSameSite(http.SameSiteStrictMode)
 	c.SetCookie("scrapy_session", tok, 12*3600, "/", "", true, true)
 	c.JSON(http.StatusOK, gin.H{"mustChangePassword": mustChange, "role": role})
+}
+
+func (s *Server) handleMe(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"userId": c.GetString("uid"), "role": c.GetString("role")})
+}
+
+// handleLogout is a REAL revocation, not just clearing the client's cookie: the session's
+// jti goes on a deny-list checked by sessionAuth on every request, so a stolen cookie
+// stops working immediately instead of staying valid until its 12h TTL expires.
+func (s *Server) handleLogout(c *gin.Context) {
+	jti := c.GetString("jti")
+	exp, _ := c.Get("exp")
+	expiresAt, _ := exp.(time.Time)
+	if expiresAt.IsZero() {
+		expiresAt = time.Now().Add(24 * time.Hour)
+	}
+	if err := s.Store.RevokeSession(c.Request.Context(), jti, expiresAt); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetCookie("scrapy_session", "", -1, "/", "", true, true)
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 // --- SDK: bootstrap (replaces env:) ---
@@ -239,14 +301,14 @@ func (s *Server) handleConnect(c *gin.Context) {
 
 func (s *Server) handleEvaluate(c *gin.Context) {
 	var body struct {
-		Scope string                 `json:"scope"`
 		Attrs map[string]interface{} `json:"attrs"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
 		return
 	}
-	entries, err := s.Store.ListByScope(c.Request.Context(), body.Scope, "prod")
+	scope, env := c.GetString("scope"), c.GetString("env")
+	entries, err := s.Store.ListByScope(c.Request.Context(), scope, env)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
@@ -275,6 +337,42 @@ func hashETag(b []byte) string {
 
 // --- admin ---
 
+func (s *Server) handleListScopes(c *gin.Context) {
+	rows, err := s.Store.Pool.Query(c.Request.Context(), `SELECT name FROM scopes ORDER BY name`)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	scopes := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		scopes = append(scopes, name)
+	}
+
+	envRows, err := s.Store.Pool.Query(c.Request.Context(), `SELECT name FROM environments ORDER BY name`)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer envRows.Close()
+	envs := []string{}
+	for envRows.Next() {
+		var name string
+		if err := envRows.Scan(&name); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		envs = append(envs, name)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"scopes": scopes, "envs": envs})
+}
+
 func (s *Server) handleListEntries(c *gin.Context) {
 	scope, env := c.Query("scope"), c.Query("env")
 	entries, err := s.Store.ListByScope(c.Request.Context(), scope, env)
@@ -301,6 +399,9 @@ func (s *Server) handleSetEntry(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
 		return
 	}
+	if !s.requireScopeAccess(c, body.Scope) {
+		return
+	}
 	e, err := s.Store.Upsert(c.Request.Context(), body.Scope, body.Env, body.Key, body.Type,
 		body.Value, body.Rules, body.Secret, c.GetString("uid"))
 	if err != nil {
@@ -313,6 +414,9 @@ func (s *Server) handleSetEntry(c *gin.Context) {
 func (s *Server) handleKill(c *gin.Context) {
 	scope := c.Param("scope")
 	env := c.Query("env")
+	if !s.requireScopeAccess(c, scope) {
+		return
+	}
 	n, err := s.Store.KillScope(c.Request.Context(), scope, env, c.GetString("uid"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -335,7 +439,7 @@ func (s *Server) handleAudit(c *gin.Context) {
 		Before, After                json.RawMessage
 		At                           time.Time
 	}
-	var out []row
+	out := []row{}
 	for rows.Next() {
 		var rr row
 		var actorID, entryID *string
@@ -377,4 +481,22 @@ func (s *Server) handleCreateKey(c *gin.Context) {
 	}
 	// plaintext key is returned exactly once; only the hash persists
 	c.JSON(http.StatusOK, gin.H{"key": plain})
+}
+
+// handleRevokeKey supports zero-downtime key rotation: mint a new key, roll it out to the
+// consumer, then revoke the old one by prefix — no window where the service has no
+// working key, and no shared secret to redistribute manually.
+func (s *Server) handleRevokeKey(c *gin.Context) {
+	prefix := c.Param("prefix")
+	tag, err := s.Store.Pool.Exec(c.Request.Context(),
+		`UPDATE api_keys SET revoked_at = now() WHERE prefix = $1 AND revoked_at IS NULL`, prefix)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "key not found or already revoked"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

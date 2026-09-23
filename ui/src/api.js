@@ -15,7 +15,10 @@ async function call(path, opts = {}) {
 export const api = {
   login: (email, password) =>
     call("/v1/auth/login", { method: "POST", body: JSON.stringify({ Email: email, Password: password }) }),
+  me: () => call("/v1/auth/me"),
+  logout: () => call("/v1/auth/logout", { method: "POST" }),
   listEntries: (scope, env) => call(`/v1/admin/entries?scope=${scope}&env=${env}`),
+  listScopes: () => call("/v1/admin/scopes"),
   setEntry: (body) => call("/v1/admin/entries", { method: "PUT", body: JSON.stringify(body) }),
   kill: (scope, env) => call(`/v1/admin/kill/${scope}?env=${env}`, { method: "POST" }),
   audit: () => call("/v1/admin/audit"),
