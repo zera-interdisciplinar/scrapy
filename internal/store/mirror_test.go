@@ -3,9 +3,10 @@ package store
 import "testing"
 
 // TestApplyMirrorRow_Allowlist locks the mirror's table allowlist to what
-// migrations/003_backup_outbox.sql actually triggers on, without needing a live Postgres.
+// migrations/003_backup_outbox.sql and 004_security_hardening.sql actually trigger on,
+// without needing a live Postgres.
 func TestApplyMirrorRow_Allowlist(t *testing.T) {
-	want := []string{"environments", "scopes", "entries", "entry_versions", "users", "api_keys", "audit_log", "instances"}
+	want := []string{"environments", "scopes", "entries", "entry_versions", "users", "api_keys", "audit_log", "instances", "revoked_sessions"}
 	if len(mirrorTables) != len(want) {
 		t.Fatalf("mirrorTables has %d entries, want %d", len(mirrorTables), len(want))
 	}
