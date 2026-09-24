@@ -1,0 +1,66 @@
+name: Deploy QA
+
+on:
+  push:
+    branches:
+      - qa
+
+env:
+  REGISTRY: southamerica-east1-docker.pkg.dev
+  IMAGE: southamerica-east1-docker.pkg.dev/zera-509513/repo/scrapy
+
+jobs:
+  deploy:
+    name: Deploy to QA
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/366904660850/locations/global/workloadIdentityPools/zera-pool/providers/github-provider
+          service_account: github-actions-deploy@zera-509513.iam.gserviceaccount.com
+
+      - uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: zera-cluster
+          location: southamerica-east1
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Run Tests
+        run: go test ./...
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      - name: Build and Push Docker Image
+        run: |
+          docker build \
+            --tag ${{ env.IMAGE }}:qa \
+            --tag ${{ env.IMAGE }}:qa-${{ github.sha }} \
+            .
+          docker push ${{ env.IMAGE }}:qa
+          docker push ${{ env.IMAGE }}:qa-${{ github.sha }}
+
+      - name: Deploy to GKE
+        run: |
+          sed -i "s|IMAGE_TAG|qa-${{ github.sha }}|g" k8s/deployment-qa.yaml
+          kubectl apply -f k8s/deployment-qa.yaml -n qa
+          kubectl apply -f k8s/service-qa.yaml -n qa
+          kubectl rollout status deployment/scrapy -n qa --timeout=180s
+
+      - name: Annotate Deployment
+        run: |
+          kubectl annotate deployment scrapy \
+            -n qa \
+            kubernetes.io/change-cause="QA deploy — commit ${{ github.sha }}" \
+            --overwrite
