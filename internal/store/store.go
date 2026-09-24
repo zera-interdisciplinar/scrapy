@@ -86,6 +86,32 @@ func Open(ctx context.Context, dsn string, masterKey []byte) (*Store, error) {
 
 func (s *Store) Close() { s.Pool.Close() }
 
+// IsSessionRevoked checks the deny-list a logout or admin kill writes to (JWTs can't be
+// revoked any other way since they're stateless).
+func (s *Store) IsSessionRevoked(ctx context.Context, jti string) (bool, error) {
+	var exists bool
+	err := s.Pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM revoked_sessions WHERE jti=$1)`, jti).Scan(&exists)
+	return exists, err
+}
+
+func (s *Store) RevokeSession(ctx context.Context, jti string, expiresAt time.Time) error {
+	_, err := s.Pool.Exec(ctx,
+		`INSERT INTO revoked_sessions (jti, expires_at) VALUES ($1,$2) ON CONFLICT (jti) DO NOTHING`,
+		jti, expiresAt)
+	return err
+}
+
+// AllowedScopes returns nil if the user has no scope restriction (full access).
+func (s *Store) AllowedScopes(ctx context.Context, userID string) ([]string, error) {
+	var scopes []string
+	err := s.Pool.QueryRow(ctx, `SELECT allowed_scopes FROM users WHERE id=$1`, userID).Scan(&scopes)
+	if err != nil {
+		return nil, err
+	}
+	return scopes, nil
+}
+
 type Entry struct {
 	ID        string          `json:"id"`
 	ScopeID   string          `json:"scopeId"`
@@ -155,7 +181,7 @@ func (s *Store) ListByScope(ctx context.Context, scope, env string) ([]Entry, er
 	}
 	defer rows.Close()
 
-	var out []Entry
+	out := []Entry{}
 	for rows.Next() {
 		var e Entry
 		var valueEnc string

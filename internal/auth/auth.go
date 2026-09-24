@@ -69,10 +69,15 @@ type Claims struct {
 }
 
 func IssueSession(secret []byte, userID, role string, ttl time.Duration) (string, error) {
+	jti := make([]byte, 16)
+	if _, err := rand.Read(jti); err != nil {
+		return "", err
+	}
 	claims := Claims{
 		UserID: userID,
 		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        hex.EncodeToString(jti),
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
@@ -81,11 +86,14 @@ func IssueSession(secret []byte, userID, role string, ttl time.Duration) (string
 	return tok.SignedString(secret)
 }
 
+// ParseSession only accepts HS256 (the algorithm we sign with) — without this, the
+// library accepts whatever alg the token itself declares, which is a classic forgery
+// vector when the verify callback ignores the algorithm.
 func ParseSession(secret []byte, raw string) (*Claims, error) {
 	claims := &Claims{}
 	tok, err := jwt.ParseWithClaims(raw, claims, func(t *jwt.Token) (interface{}, error) {
 		return secret, nil
-	})
+	}, jwt.WithValidMethods([]string{"HS256"}))
 	if err != nil || !tok.Valid {
 		return nil, errors.New("invalid session")
 	}
