@@ -1,5 +1,5 @@
 async function call(path, opts = {}) {
-  const res = await fetch(path, {
+  const res = await fetch(import.meta.env.BASE_URL + path.replace(/^\//, ""), {
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     ...opts,
