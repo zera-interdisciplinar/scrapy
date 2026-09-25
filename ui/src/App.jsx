@@ -471,6 +471,39 @@ function ContentForm({ scope, env, onCreated }) {
   );
 }
 
+// key só é exibida uma vez (o backend nunca guarda o plaintext) — se fechar sem copiar,
+// tem que gerar outra.
+function ApiKeyButton({ scope, env }) {
+  const [key, setKey] = useState(null);
+  const [err, setErr] = useState("");
+
+  async function generate() {
+    setErr("");
+    setKey(null);
+    if (!confirm(`Gerar nova chave de API para ${scope}/${env}?`)) return;
+    try {
+      const res = await api.createKey(scope, env);
+      setKey(res.key);
+    } catch (e) {
+      setErr(e.message);
+    }
+  }
+
+  if (!scope) return null;
+
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+      <button className="btn btn-ghost" onClick={generate}>gerar api key</button>
+      {key && (
+        <span className="msg-pill" title="copie agora, não será mostrada de novo">
+          {key}
+        </span>
+      )}
+      {err && <span className="error-text">{err}</span>}
+    </span>
+  );
+}
+
 function EntryTable({ entries, scope, env, onSaved, emptyLabel }) {
   if (entries.length === 0) {
     return <div className="empty-state">{emptyLabel}</div>;
@@ -669,6 +702,7 @@ function Dashboard({ onLogout }) {
           {tab === "flags" && (
             <button className="btn btn-danger" onClick={kill}>kill switch</button>
           )}
+          <ApiKeyButton scope={scope} env={env} />
           {msg && <span className="msg-pill">{msg}</span>}
         </div>
 
