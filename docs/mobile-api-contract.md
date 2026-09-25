@@ -2,10 +2,10 @@
 
 Dois endpoints:
 
-- `POST /v1/boot` — chamado no boot do app, antes do login. Retorna só envs (entries marcadas `boot_only` no admin), sem segmentação.
-- `POST /v1/flags` — chamado depois do login. Retorna flags/conteúdo (entries com `boot_only=false`), geral ou individual por chave via `attrs` (mesma mecânica de regras de antes).
+- `POST /v1/boot` — boot do app, antes do login. Retorna só envs (entries marcadas `boot_only=true` no admin). Sem body, sem segmentação.
+- `POST /v1/flags` — depois do login. Retorna flags/conteúdo (entries com `boot_only=false`), geral ou individual por chave via `attrs`.
 
-Ambos usam a mesma autenticação e o mesmo formato de request/response do antigo `/v1/evaluate` abaixo — só mudou o path e o filtro de quais entries voltam.
+Mesma autenticação e mesmo formato de resposta/caching nos dois; a diferença é o body (só `/v1/flags` aceita `attrs`) e o filtro de quais entries voltam (`boot_only`).
 
 ## Base URL
 
@@ -15,22 +15,47 @@ https://<host>/v1
 
 ## Autenticação
 
-Header obrigatório em toda chamada:
+Header obrigatório em toda chamada, nos dois endpoints (mesmo header validado pelo Kong na borda):
 
 ```
-Authorization: Bearer <api_key>
+apikey: <api_key>
 ```
 
 - API key é do tipo cliente: só leitura, presa a um `scope` + `env` fixos (definidos no momento em que a key foi criada no admin).
-- Key pode ser extraída do app (é pública por natureza) — por isso é somente leitura e tem rate limit por IP (120 req/min).
+- Key pode ser extraída do app (é pública por natureza) — por isso é somente leitura e tem rate limit por IP (120 req/min, por endpoint).
 - Key inválida ou revogada → `401 { "error": "invalid api key" }`.
 
-## Requisição
+## `POST /v1/boot`
+
+Chamado no startup do app, antes de qualquer login.
+
+```
+POST /v1/boot
+apikey: <api_key>
+If-None-Match: "<etag_anterior>"   // opcional, ver caching abaixo
+```
+
+Sem body (o handler não lê nada do request além dos headers).
+
+Resposta `200 OK`, mapa `key -> value` só das entries marcadas `boot_only=true` no admin:
+
+```json
+{
+  "api_base_url": "https://api.zera.com",
+  "min_supported_version": "3.0.0"
+}
+```
+
+Não há segmentação aqui — é sempre o valor base, não existe usuário logado ainda pra aplicar regra.
+
+## `POST /v1/flags`
+
+Chamado depois do login, quando já dá pra segmentar por usuário.
 
 ```
 POST /v1/flags
 Content-Type: application/json
-Authorization: Bearer <api_key>
+apikey: <api_key>
 If-None-Match: "<etag_anterior>"   // opcional, ver caching abaixo
 ```
 
@@ -47,12 +72,11 @@ Body:
 }
 ```
 
-- `attrs`: mapa livre chave→valor (string, número, bool). Usado pelo servidor pra bater com as regras de segmentação de cada flag/config. Nunca mande dado sensível aqui — não é criptografado além do TLS.
-- Não existe schema fixo de `attrs`; manda só o que os rules do scope realmente usam.
+- `attrs`: mapa livre chave→valor (string, número, bool). Usado pelo servidor pra bater com as regras de segmentação de cada flag/conteúdo — inclusive pra resolver valor individual por usuário (regra com `attr: "user_id"`, por exemplo). Sem `attrs` correspondente, cai no valor geral.
+- Nunca mande dado sensível em `attrs` — não é criptografado além do TLS.
+- Não existe schema fixo; manda só o que os rules do scope realmente usam.
 
-## Resposta
-
-`200 OK`, body é mapa `key -> value` já resolvido pro attrs enviado:
+Resposta `200 OK`, mapa `key -> value` só das entries com `boot_only=false`, já resolvido pro `attrs` enviado:
 
 ```json
 {
@@ -62,9 +86,12 @@ Body:
 }
 ```
 
+- Resolução de regra é 100% server-side: mobile nunca vê as regras, só o resultado final.
+
+## Comum aos dois endpoints
+
 - Cada valor pode ser bool, número, string ou objeto — depende de como foi cadastrado no admin.
-- Entries marcadas como `secret` nunca aparecem aqui (servidor já filtra).
-- Resolução de regra é 100% server-side: mobile nunca vê as regras, só o resultado final pro attrs mandado.
+- Entries marcadas como `secret` nunca aparecem em nenhum dos dois (servidor já filtra).
 
 Header de resposta:
 
@@ -72,21 +99,21 @@ Header de resposta:
 ETag: "<hash>"
 ```
 
-## Caching / polling
+### Caching / polling
 
-Guarda o `ETag` recebido. Na próxima chamada manda:
+Guarda o `ETag` recebido (por endpoint — `/v1/boot` e `/v1/flags` têm ETags independentes). Na próxima chamada manda:
 
 ```
 If-None-Match: "<etag_guardado>"
 ```
 
-Se nada mudou, servidor responde `304 Not Modified` (corpo vazio) — evita reprocessar e economiza banda. Se mudou, vem `200` com novo corpo + novo ETag.
+Se nada mudou, servidor responde `304 Not Modified` (corpo vazio). Se mudou, vem `200` com novo corpo + novo ETag.
 
-## Erros
+### Erros
 
 | Status | Quando |
 |---|---|
-| 400 | body malformado (`attrs` não é JSON válido) |
+| 400 | body malformado (`/v1/flags`: `attrs` não é JSON válido) |
 | 401 | key ausente, inválida ou revogada |
 | 429 | rate limit estourado (120 req/min por IP) |
 | 500 | erro interno |
@@ -96,7 +123,7 @@ Se nada mudou, servidor responde `304 Not Modified` (corpo vazio) — evita repr
 ```swift
 var req = URLRequest(url: URL(string: "https://host/v1/flags")!)
 req.httpMethod = "POST"
-req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+req.setValue(apiKey, forHTTPHeaderField: "apikey")
 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
 if let etag = cachedETag {
     req.setValue(etag, forHTTPHeaderField: "If-None-Match")
@@ -112,7 +139,9 @@ val body = JSONObject(mapOf("attrs" to attrs)).toString()
 val req = Request.Builder()
     .url("https://host/v1/flags")
     .post(body)
-    .addHeader("Authorization", "Bearer $apiKey")
+    .addHeader("apikey", apiKey)
     .apply { cachedETag?.let { addHeader("If-None-Match", it) } }
     .build()
 ```
+
+`/v1/boot` é igual, só sem `Content-Type`/body e trocando a URL/endpoint.

@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -134,14 +133,16 @@ func (s *Server) requireScopeAccess(c *gin.Context, scope string) bool {
 
 // apiKeyAuth authenticates SDK calls. Keys are read-only by construction: there is no
 // write endpoint behind this middleware.
+//
+// Reads the key from the `apikey` header — same header/name Kong's key-auth plugin expects
+// at the gateway, so both layers check the same credential the client actually sends.
 func (s *Server) apiKeyAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		h := c.GetHeader("Authorization")
-		if !strings.HasPrefix(h, "Bearer ") {
+		plain := c.GetHeader("apikey")
+		if plain == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing api key"})
 			return
 		}
-		plain := strings.TrimPrefix(h, "Bearer ")
 		sum := sha256.Sum256([]byte(plain))
 		hash := hex.EncodeToString(sum[:])
 
