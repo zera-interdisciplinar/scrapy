@@ -1,5 +1,5 @@
 // Package api wires HTTP handlers (Gin) for the three consumer classes: admin UI (cookie
-// session + RBAC), SDKs (API key, bootstrap + WebSocket), and mobile (public evaluate).
+// session + RBAC), SDKs (API key, bootstrap + WebSocket), and mobile (API key, boot + flags).
 package api
 
 import (
@@ -32,7 +32,7 @@ func (s *Server) Routes() *gin.Engine {
 	r.Use(gin.Recovery(), gin.Logger())
 
 	loginLimiter := newRateLimiter(10, time.Minute)    // brute-force guard on password auth
-	evaluateLimiter := newRateLimiter(120, time.Minute) // per-IP, mobile clients poll this
+	mobileLimiter := newRateLimiter(120, time.Minute)  // per-IP, mobile clients poll this
 
 	r.GET("/v1/healthz", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 	r.POST("/v1/auth/login", loginLimiter.middleware(), s.handleLogin)
@@ -47,7 +47,10 @@ func (s *Server) Routes() *gin.Engine {
 	// client key is meant to be embedded in a public app (anyone can extract it), so the
 	// key only ever grants read on the one scope/env it was minted for, and the endpoint
 	// is rate-limited per IP on top of that.
-	r.POST("/v1/evaluate", evaluateLimiter.middleware(), s.apiKeyAuth(), s.handleEvaluate)
+	// /v1/boot: app startup, before login — envs only (entries flagged boot_only).
+	// /v1/flags: after login — flags/content, general or per-user via attrs-matched rules.
+	r.POST("/v1/boot", mobileLimiter.middleware(), s.apiKeyAuth(), s.handleBoot)
+	r.POST("/v1/flags", mobileLimiter.middleware(), s.apiKeyAuth(), s.handleFlags)
 
 	admin := r.Group("/v1/admin", s.sessionAuth(roleViewer))
 	admin.GET("/entries", s.handleListEntries)
@@ -300,7 +303,21 @@ func (s *Server) handleConnect(c *gin.Context) {
 
 // --- mobile ---
 
-func (s *Server) handleEvaluate(c *gin.Context) {
+// handleBoot serves app startup, before login: envs only (boot_only entries), unresolved —
+// there's no user yet to segment by.
+func (s *Server) handleBoot(c *gin.Context) {
+	scope, env := c.GetString("scope"), c.GetString("env")
+	entries, err := s.Store.ListByScopeBootOnly(c.Request.Context(), scope, env, true)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	writeMobileEntries(c, entries, nil)
+}
+
+// handleFlags serves flags/content after login: general value, or per-user/per-key via
+// attrs-matched rules (e.g. {"userId": "..."}) — same segmentation eval.Resolve always did.
+func (s *Server) handleFlags(c *gin.Context) {
 	var body struct {
 		Attrs map[string]interface{} `json:"attrs"`
 	}
@@ -309,17 +326,21 @@ func (s *Server) handleEvaluate(c *gin.Context) {
 		return
 	}
 	scope, env := c.GetString("scope"), c.GetString("env")
-	entries, err := s.Store.ListByScope(c.Request.Context(), scope, env)
+	entries, err := s.Store.ListByScopeBootOnly(c.Request.Context(), scope, env, false)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
+	writeMobileEntries(c, entries, body.Attrs)
+}
+
+func writeMobileEntries(c *gin.Context, entries []store.Entry, attrs map[string]interface{}) {
 	out := make(map[string]json.RawMessage, len(entries))
 	for _, e := range entries {
 		if e.Secret {
 			continue // mobile never receives secret entries
 		}
-		out[e.Key] = eval.Resolve(e.Value, e.Rules, body.Attrs)
+		out[e.Key] = eval.Resolve(e.Value, e.Rules, attrs)
 	}
 	payload, _ := json.Marshal(out)
 	etag := `"` + hashETag(payload) + `"`

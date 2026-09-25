@@ -168,14 +168,30 @@ func (s *Store) decrypt(enc string) ([]byte, error) {
 // ListByScope returns every entry for a scope/environment, decrypting secrets. Used for
 // /v1/bootstrap (env replacement) and the WS `state` message.
 func (s *Store) ListByScope(ctx context.Context, scope, env string) ([]Entry, error) {
-	rows, err := s.Pool.Query(ctx, `
+	return s.listByScope(ctx, scope, env, nil)
+}
+
+// ListByScopeBootOnly filters by the boot_only flag on top of ListByScope, used to split
+// mobile's pre-login envs (/v1/boot) from post-login flags/content (/v1/flags).
+func (s *Store) ListByScopeBootOnly(ctx context.Context, scope, env string, bootOnly bool) ([]Entry, error) {
+	return s.listByScope(ctx, scope, env, &bootOnly)
+}
+
+func (s *Store) listByScope(ctx context.Context, scope, env string, bootOnly *bool) ([]Entry, error) {
+	query := `
 		SELECT e.id, e.scope_id, e.env_id, e.key, e.type, e.value, e.rules,
 		       e.secret, e.boot_only, e.version, e.updated_at
 		FROM entries e
 		JOIN scopes s ON s.id = e.scope_id
 		JOIN environments en ON en.id = e.env_id
-		WHERE s.name = $1 AND en.name = $2
-		ORDER BY e.key`, scope, env)
+		WHERE s.name = $1 AND en.name = $2`
+	args := []interface{}{scope, env}
+	if bootOnly != nil {
+		query += " AND e.boot_only = $3"
+		args = append(args, *bootOnly)
+	}
+	query += " ORDER BY e.key"
+	rows, err := s.Pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
