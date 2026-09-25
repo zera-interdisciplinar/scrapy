@@ -207,6 +207,37 @@ func (s *Store) ListByScope(ctx context.Context, scope, env string) ([]Entry, er
 	return out, rows.Err()
 }
 
+// Delete removes an entry (env/flag/content) and records the deletion in audit_log.
+func (s *Store) Delete(ctx context.Context, scope, env, key, actorID string) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var entryID string
+	var before json.RawMessage
+	err = tx.QueryRow(ctx, `
+		DELETE FROM entries e
+		USING scopes s, environments en
+		WHERE e.scope_id = s.id AND e.env_id = en.id
+		  AND s.name = $1 AND en.name = $2 AND e.key = $3
+		RETURNING e.id, e.value`, scope, env, key).Scan(&entryID, &before)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("entry %q not found", key)
+		}
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_log (actor_id, action, entry_id, before, after)
+		VALUES ($1,'entry.delete',$2,$3,NULL)`, nullable(actorID), entryID, before); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // Upsert validates the value against the entry's declared type, encrypts it if secret,
 // bumps version, and writes an entry_versions row + audit_log row in one transaction.
 func (s *Store) Upsert(ctx context.Context, scope, env, key, typ string, value json.RawMessage, rules json.RawMessage, secret bool, actorID string) (*Entry, error) {

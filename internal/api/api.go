@@ -56,6 +56,7 @@ func (s *Server) Routes() *gin.Engine {
 
 	editors := r.Group("/v1/admin", s.sessionAuth(roleEditor))
 	editors.PUT("/entries", s.handleSetEntry)
+	editors.DELETE("/entries", s.handleDeleteEntry)
 	editors.POST("/kill/:scope", s.handleKill)
 
 	admins := r.Group("/v1/admin", s.sessionAuth(roleAdmin))
@@ -409,6 +410,18 @@ func (s *Server) handleSetEntry(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, e)
+}
+
+func (s *Server) handleDeleteEntry(c *gin.Context) {
+	scope, env, key := c.Query("scope"), c.Query("env"), c.Query("key")
+	if !s.requireScopeAccess(c, scope) {
+		return
+	}
+	if err := s.Store.Delete(c.Request.Context(), scope, env, key, c.GetString("uid")); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (s *Server) handleKill(c *gin.Context) {

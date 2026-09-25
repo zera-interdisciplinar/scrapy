@@ -256,6 +256,19 @@ function EntryRow({ entry, scope, env, onSaved }) {
     }
   }
 
+  async function remove() {
+    if (!confirm(`Excluir "${entry.key}" de ${scope}/${env}? Não tem como desfazer.`)) return;
+    setSaving(true);
+    setErr("");
+    try {
+      await api.deleteEntry(scope, env, entry.key);
+      onSaved();
+    } catch (e) {
+      setErr(e.message);
+      setSaving(false);
+    }
+  }
+
   return (
     <>
       <tr>
@@ -294,6 +307,9 @@ function EntryRow({ entry, scope, env, onSaved }) {
               segmentação{rules.length > 0 ? ` (${rules.length})` : ""}
             </button>
           )}
+          <button className="btn btn-ghost btn-danger" style={{ marginLeft: 4 }} onClick={remove} disabled={saving} title="excluir">
+            🗑️
+          </button>
           {err && <span className="error-text" style={{ marginLeft: 8 }}>{err}</span>}
         </td>
       </tr>

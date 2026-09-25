@@ -20,6 +20,8 @@ export const api = {
   listEntries: (scope, env) => call(`/v1/admin/entries?scope=${scope}&env=${env}`),
   listScopes: () => call("/v1/admin/scopes"),
   setEntry: (body) => call("/v1/admin/entries", { method: "PUT", body: JSON.stringify(body) }),
+  deleteEntry: (scope, env, key) =>
+    call(`/v1/admin/entries?scope=${scope}&env=${env}&key=${encodeURIComponent(key)}`, { method: "DELETE" }),
   kill: (scope, env) => call(`/v1/admin/kill/${scope}?env=${env}`, { method: "POST" }),
   audit: () => call("/v1/admin/audit"),
   createKey: (scope, env) => call("/v1/admin/keys", { method: "POST", body: JSON.stringify({ Scope: scope, Env: env }) }),
