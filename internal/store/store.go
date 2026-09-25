@@ -190,7 +190,11 @@ func (s *Store) ListByScope(ctx context.Context, scope, env string) ([]Entry, er
 			return nil, err
 		}
 		if e.Secret {
-			plain, err := s.decrypt(valueEnc)
+			var enc string
+			if err := json.Unmarshal([]byte(valueEnc), &enc); err != nil {
+				return nil, fmt.Errorf("decode secret %s: %w", e.Key, err)
+			}
+			plain, err := s.decrypt(enc)
 			if err != nil {
 				return nil, fmt.Errorf("decrypt %s: %w", e.Key, err)
 			}
@@ -239,7 +243,11 @@ func (s *Store) Upsert(ctx context.Context, scope, env, key, typ string, value j
 		if err != nil {
 			return nil, err
 		}
-		storedValue = enc
+		encJSON, err := json.Marshal(enc)
+		if err != nil {
+			return nil, err
+		}
+		storedValue = string(encJSON)
 	}
 	if rules == nil {
 		rules = json.RawMessage("[]")
