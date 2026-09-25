@@ -256,7 +256,7 @@ func (s *Store) Delete(ctx context.Context, scope, env, key, actorID string) err
 
 // Upsert validates the value against the entry's declared type, encrypts it if secret,
 // bumps version, and writes an entry_versions row + audit_log row in one transaction.
-func (s *Store) Upsert(ctx context.Context, scope, env, key, typ string, value json.RawMessage, rules json.RawMessage, secret bool, actorID string) (*Entry, error) {
+func (s *Store) Upsert(ctx context.Context, scope, env, key, typ string, value json.RawMessage, rules json.RawMessage, secret, bootOnly bool, actorID string) (*Entry, error) {
 	if !validTypes[typ] {
 		return nil, fmt.Errorf("invalid type %q", typ)
 	}
@@ -303,19 +303,20 @@ func (s *Store) Upsert(ctx context.Context, scope, env, key, typ string, value j
 	var before json.RawMessage
 	var e Entry
 	err = tx.QueryRow(ctx, `
-		INSERT INTO entries (scope_id, env_id, key, type, value, rules, secret, version)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,1)
+		INSERT INTO entries (scope_id, env_id, key, type, value, rules, secret, boot_only, version)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1)
 		ON CONFLICT (scope_id, env_id, key) DO UPDATE
 		SET value = EXCLUDED.value, rules = EXCLUDED.rules, type = EXCLUDED.type,
-		    secret = EXCLUDED.secret, version = entries.version + 1, updated_at = now()
+		    secret = EXCLUDED.secret, boot_only = EXCLUDED.boot_only,
+		    version = entries.version + 1, updated_at = now()
 		RETURNING id, key, type, version, updated_at,
 		          (SELECT value FROM entries e2 WHERE e2.id = entries.id) `,
-		scopeID, envID, key, typ, storedValue, string(rules), secret,
+		scopeID, envID, key, typ, storedValue, string(rules), secret, bootOnly,
 	).Scan(&e.ID, &e.Key, &e.Type, &e.Version, &e.UpdatedAt, &before)
 	if err != nil {
 		return nil, err
 	}
-	e.ScopeID, e.EnvID, e.Value, e.Rules, e.Secret = scopeID, envID, value, rules, secret
+	e.ScopeID, e.EnvID, e.Value, e.Rules, e.Secret, e.BootOnly = scopeID, envID, value, rules, secret, bootOnly
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO entry_versions (entry_id, value, rules, version, actor_id)

@@ -239,6 +239,7 @@ function EntryRow({ entry, scope, env, onSaved }) {
   const [value, setValue] = useState(displayValueForType(entry.type, entry.value));
   const [rules, setRules] = useState(entry.rules ?? []);
   const [showRules, setShowRules] = useState(false);
+  const [bootOnly, setBootOnly] = useState(entry.bootOnly ?? false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
@@ -247,7 +248,7 @@ function EntryRow({ entry, scope, env, onSaved }) {
     setSaving(true);
     setErr("");
     try {
-      await api.setEntry(buildSetEntryPayload(entry, scope, env, value, rules));
+      await api.setEntry(buildSetEntryPayload(entry, scope, env, value, rules, bootOnly));
       onSaved();
     } catch (e) {
       setErr(e.message);
@@ -276,8 +277,16 @@ function EntryRow({ entry, scope, env, onSaved }) {
         <td><span className="badge">{entry.type}</span></td>
         <td>
           {entry.secret && <span className="badge badge-secret">secret</span>}
-          {entry.bootOnly && <span className="badge" style={{ marginLeft: 4 }}>boot</span>}
-          {!entry.secret && !entry.bootOnly && <span className="badge">runtime</span>}
+          {!entry.secret && (
+            <label style={{ marginLeft: entry.secret ? 4 : 0 }}>
+              <input
+                type="checkbox"
+                checked={bootOnly}
+                onChange={(e) => setBootOnly(e.target.checked)}
+              />
+              boot
+            </label>
+          )}
         </td>
         <td>v{entry.version}</td>
         <td>
@@ -330,7 +339,7 @@ function EntryRow({ entry, scope, env, onSaved }) {
 function useCreateEntry(scope, env, onCreated) {
   const [err, setErr] = useState("");
 
-  async function create(key, type, rawValue, secret) {
+  async function create(key, type, rawValue, secret, bootOnly = false) {
     setErr("");
     if (!key.trim()) {
       setErr("chave é obrigatória");
@@ -349,6 +358,7 @@ function useCreateEntry(scope, env, onCreated) {
         Value: parsed,
         Rules: [],
         Secret: secret,
+        BootOnly: bootOnly,
       });
       onCreated();
       return true;
@@ -391,13 +401,15 @@ function EnvForm({ scope, env, onCreated }) {
   const [type, setType] = useState("string");
   const [value, setValue] = useState("");
   const [secret, setSecret] = useState(false);
+  const [bootOnly, setBootOnly] = useState(true);
   const { create, err } = useCreateEntry(scope, env, onCreated);
 
   async function submit() {
-    if (await create(key, type, value, secret)) {
+    if (await create(key, type, value, secret, bootOnly)) {
       setKey("");
       setValue("");
       setSecret(false);
+      setBootOnly(true);
     }
   }
 
@@ -419,6 +431,10 @@ function EnvForm({ scope, env, onCreated }) {
       <label>
         <input type="checkbox" checked={secret} onChange={(e) => setSecret(e.target.checked)} />
         secret
+      </label>
+      <label>
+        <input type="checkbox" checked={bootOnly} onChange={(e) => setBootOnly(e.target.checked)} />
+        só no boot
       </label>
       <button className="btn btn-primary" style={{ width: "auto" }} onClick={submit}>+ criar env</button>
       {err && <span className="error-text">{err}</span>}

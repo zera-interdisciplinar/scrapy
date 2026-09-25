@@ -32,7 +32,7 @@ export function displayValueForType(type, jsonRaw) {
 // Monta o payload de PUT /v1/admin/entries a partir de uma entry já carregada da API.
 // rules, se passado, substitui entry.rules (edição via RulesEditor); senão preserva o que
 // já existia. Nenhum dos dois passa por JSON.parse — já chegam nativos do backend.
-export function buildSetEntryPayload(entry, scope, env, rawValue, rules) {
+export function buildSetEntryPayload(entry, scope, env, rawValue, rules, bootOnly) {
   return {
     Scope: scope,
     Env: env,
@@ -41,6 +41,7 @@ export function buildSetEntryPayload(entry, scope, env, rawValue, rules) {
     Value: parseValueForType(entry.type, rawValue),
     Rules: rules ?? entry.rules ?? [],
     Secret: entry.secret,
+    BootOnly: bootOnly ?? entry.bootOnly ?? false,
   };
 }
 

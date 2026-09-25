@@ -417,6 +417,7 @@ func (s *Server) handleSetEntry(c *gin.Context) {
 		Value                 json.RawMessage
 		Rules                 json.RawMessage
 		Secret                bool
+		BootOnly              bool
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
@@ -426,7 +427,7 @@ func (s *Server) handleSetEntry(c *gin.Context) {
 		return
 	}
 	e, err := s.Store.Upsert(c.Request.Context(), body.Scope, body.Env, body.Key, body.Type,
-		body.Value, body.Rules, body.Secret, c.GetString("uid"))
+		body.Value, body.Rules, body.Secret, body.BootOnly, c.GetString("uid"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
