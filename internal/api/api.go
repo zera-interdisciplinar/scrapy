@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -65,9 +66,24 @@ func (s *Server) Routes() *gin.Engine {
 	admins.POST("/keys", s.handleCreateKey)
 	admins.POST("/keys/:prefix/revoke", s.handleRevokeKey)
 
+	// NoRoute must never hand HTML to an unmatched /v1/* call: a gateway that fails to
+	// strip its own prefix (e.g. Kong forwarding "/qa/scrapy/v1/boot" instead of "/v1/boot")
+	// makes Gin miss the real route, and falling through to the SPA file server used to
+	// return 200 + index.html for a JSON API client — which crashes strict decoders (mobile)
+	// instead of surfacing a diagnosable 404.
+	var uiHandler gin.HandlerFunc
 	if s.UI != nil {
-		r.NoRoute(gin.WrapH(http.FileServer(s.UI)))
+		uiHandler = gin.WrapH(http.FileServer(s.UI))
 	}
+	r.NoRoute(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/v1/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		if uiHandler != nil {
+			uiHandler(c)
+		}
+	})
 	return r
 }
 
