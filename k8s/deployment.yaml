@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scrapy
+  namespace: production
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: scrapy
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: scrapy
+    spec:
+      containers:
+      - name: scrapy
+        image: southamerica-east1-docker.pkg.dev/zera-509513/repo/scrapy:IMAGE_TAG
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "1"
+            memory: "512Mi"
+        livenessProbe:
+          httpGet:
+            path: /v1/healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /v1/healthz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        env:
+        - name: PORT
+          value: "8080"
+        - name: DB_DSN
+          valueFrom:
+            secretKeyRef:
+              name: scrapy-secrets
+              key: DB_DSN
+        - name: SCRAPY_MASTER_KEY
+          valueFrom:
+            secretKeyRef:
+              name: scrapy-secrets
+              key: SCRAPY_MASTER_KEY
+        - name: SCRAPY_SESSION_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: scrapy-secrets
+              key: SCRAPY_SESSION_SECRET
+        # unset on purpose after the first boot; the admin user is seeded once and this
+        # value is not kept in the cluster beyond that — see k8s/README.md
+        - name: SCRAPY_BOOTSTRAP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: scrapy-secrets
+              key: SCRAPY_BOOTSTRAP_PASSWORD
+              optional: true
+        # DSN of an isolated backup Postgres every write is mirrored to (credential-loss
+        # protection). Absent = mirror disabled, primary boots and serves normally either way.
+        - name: BACKUP_DB_DSN
+          valueFrom:
+            secretKeyRef:
+              name: scrapy-secrets
+              key: BACKUP_DB_DSN
+              optional: true
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: scrapy
+  namespace: production
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: scrapy

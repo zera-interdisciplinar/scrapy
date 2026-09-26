@@ -1,0 +1,1 @@
+placeholder so `go:embed all:ui/dist` compiles before `npm run build` produces the real bundle
