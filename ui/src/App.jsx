@@ -522,7 +522,7 @@ function EntryTable({ entries, scope, env, onSaved, emptyLabel }) {
   );
 }
 
-function Sidebar({ scopes, activeScope, onSelect, onAddScope, onShowAudit, showingAudit, onLogout }) {
+function Sidebar({ scopes, activeScope, onSelect, onAddScope, panel, onShowAudit, onShowQa, onLogout }) {
   const [draft, setDraft] = useState("");
 
   function add() {
@@ -539,7 +539,7 @@ function Sidebar({ scopes, activeScope, onSelect, onAddScope, onShowAudit, showi
       {scopes.map((s) => (
         <button
           key={s}
-          className={`scope-item${s === activeScope && !showingAudit ? " active" : ""}`}
+          className={`scope-item${s === activeScope && panel === "scope" ? " active" : ""}`}
           onClick={() => onSelect(s)}
         >
           {s}
@@ -556,7 +556,10 @@ function Sidebar({ scopes, activeScope, onSelect, onAddScope, onShowAudit, showi
       </div>
 
       <div className="sidebar-section-title">Sistema</div>
-      <button className={`scope-item${showingAudit ? " active" : ""}`} onClick={onShowAudit}>
+      <button className={`scope-item${panel === "qa" ? " active" : ""}`} onClick={onShowQa}>
+        Ambiente QA
+      </button>
+      <button className={`scope-item${panel === "audit" ? " active" : ""}`} onClick={onShowAudit}>
         Auditoria
       </button>
 
@@ -566,6 +569,94 @@ function Sidebar({ scopes, activeScope, onSelect, onAddScope, onShowAudit, showi
         </button>
       </div>
     </aside>
+  );
+}
+
+function QaEnvView({ canToggle }) {
+  const [status, setStatus] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    setErr("");
+    try {
+      setStatus(await api.qaEnv());
+    } catch (e) {
+      setStatus(null);
+      setErr(e.message);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function toggle() {
+    const next = !status.enabled;
+    const msg = next
+      ? "Ligar o ambiente QA? Os serviços do namespace qa voltam para 1 réplica (scrapy e kong ficam como estão)."
+      : "Desligar o ambiente QA? Todos os serviços do namespace qa vão para 0 réplicas, exceto scrapy, o postgres dele e o kong.";
+    if (!confirm(msg)) return;
+    setBusy(true);
+    setErr("");
+    try {
+      setStatus(await api.setQaEnv(next));
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <div className="main-title" style={{ marginBottom: 16 }}>Ambiente QA</div>
+      <div className={`env-banner ${status?.enabled ? "qa" : "prod"}`}>
+        {status?.enabled ? "namespace qa ligado" : "namespace qa desligado (ou inacessível)"}
+      </div>
+      <p className="msg-pill" style={{ display: "block", marginBottom: 16, lineHeight: 1.5 }}>
+        Liga e desliga os Deployments do namespace <code>qa</code>. Scrapy, o banco do scrapy
+        e qualquer Deployment com &quot;kong&quot; no nome não são escalados — senão não dá
+        para ligar de volta pela UI.
+      </p>
+      <div className="toolbar">
+        <button className="btn btn-ghost" onClick={load} disabled={busy}>recarregar</button>
+        {canToggle && status && (
+          <button
+            className={`btn ${status.enabled ? "btn-danger" : "btn-primary"}`}
+            style={{ width: "auto" }}
+            onClick={toggle}
+            disabled={busy}
+          >
+            {status.enabled ? "desligar QA" : "ligar QA"}
+          </button>
+        )}
+        {!canToggle && (
+          <span className="msg-pill">só admin pode ligar/desligar</span>
+        )}
+        {err && <span className="error-text">{err}</span>}
+      </div>
+      {status?.deployments?.length ? (
+        <table className="card-table">
+          <thead>
+            <tr><th>deployment</th><th>réplicas</th><th></th></tr>
+          </thead>
+          <tbody>
+            {status.deployments.map((d) => (
+              <tr key={d.name}>
+                <td>{d.name}</td>
+                <td>{d.replicas}</td>
+                <td>
+                  {d.protected
+                    ? <span className="badge">protegido</span>
+                    : <span className="badge">{d.replicas > 0 ? "ativo" : "parado"}</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : !err ? (
+        <div className="empty-state">Nenhum Deployment listado no namespace qa.</div>
+      ) : null}
+    </div>
   );
 }
 
@@ -604,7 +695,7 @@ function AuditView() {
   );
 }
 
-function Dashboard({ onLogout }) {
+function Dashboard({ role, onLogout }) {
   const [scopes, setScopes] = useState([]);
   const [envs, setEnvs] = useState(["qa", "prod"]);
   const [scope, setScope] = useState("");
@@ -612,7 +703,7 @@ function Dashboard({ onLogout }) {
   const [tab, setTab] = useState("env"); // "env" | "flags" | "content"
   const [entries, setEntries] = useState([]);
   const [msg, setMsg] = useState("");
-  const [showAudit, setShowAudit] = useState(false);
+  const [panel, setPanel] = useState("scope"); // "scope" | "audit" | "qa"
 
   useEffect(() => {
     api.listScopes().then((res) => {
@@ -636,6 +727,7 @@ function Dashboard({ onLogout }) {
   function addScope(name) {
     setScopes((prev) => (prev.includes(name) ? prev : [...prev, name]));
     setScope(name);
+    setPanel("scope");
   }
 
   async function kill() {
@@ -655,15 +747,18 @@ function Dashboard({ onLogout }) {
       <Sidebar
         scopes={scopes}
         activeScope={scope}
-        onSelect={(s) => { setScope(s); setShowAudit(false); }}
+        onSelect={(s) => { setScope(s); setPanel("scope"); }}
         onAddScope={addScope}
-        onShowAudit={() => setShowAudit(true)}
-        showingAudit={showAudit}
+        panel={panel}
+        onShowAudit={() => setPanel("audit")}
+        onShowQa={() => setPanel("qa")}
         onLogout={onLogout}
       />
-      <main className={`main${isProd && !showAudit ? " env-prod" : ""}`}>
-        {showAudit ? (
+      <main className={`main${isProd && panel === "scope" ? " env-prod" : ""}`}>
+        {panel === "audit" ? (
           <AuditView />
+        ) : panel === "qa" ? (
+          <QaEnvView canToggle={role === "admin"} />
         ) : (
         <>
         <div className="main-header">
@@ -748,5 +843,5 @@ export default function App() {
     setSession(null);
   }
 
-  return <Dashboard onLogout={logout} />;
+  return <Dashboard role={session.role} onLogout={logout} />;
 }

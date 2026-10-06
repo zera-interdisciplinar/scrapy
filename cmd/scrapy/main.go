@@ -10,6 +10,7 @@ import (
 
 	"github.com/zera/scrapy/internal/api"
 	"github.com/zera/scrapy/internal/auth"
+	"github.com/zera/scrapy/internal/cluster"
 	"github.com/zera/scrapy/internal/hub"
 	"github.com/zera/scrapy/internal/store"
 	uiassets "github.com/zera/scrapy/ui"
@@ -53,7 +54,15 @@ func main() {
 		log.Fatalf("ui embed: %v", err)
 	}
 
-	srv := &api.Server{Store: st, Hub: h, SessionKey: sessionKey, UI: http.FS(uiRoot)}
+	var qa *cluster.Client
+	if c, err := cluster.InCluster(envOr("QA_NAMESPACE", "qa")); err != nil {
+		log.Printf("qa env control disabled: %v", err)
+	} else {
+		qa = c
+		log.Printf("qa env control enabled for namespace %s", qa.Namespace)
+	}
+
+	srv := &api.Server{Store: st, Hub: h, SessionKey: sessionKey, UI: http.FS(uiRoot), Cluster: qa}
 	router := srv.Routes()
 
 	addr := ":" + envOr("PORT", "8080")

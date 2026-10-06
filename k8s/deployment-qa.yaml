@@ -19,6 +19,7 @@ spec:
       labels:
         app: scrapy
     spec:
+      serviceAccountName: scrapy
       containers:
       - name: scrapy
         image: southamerica-east1-docker.pkg.dev/zera-509513/repo/scrapy:IMAGE_TAG

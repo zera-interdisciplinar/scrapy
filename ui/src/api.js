@@ -25,4 +25,7 @@ export const api = {
   kill: (scope, env) => call(`/v1/admin/kill/${scope}?env=${env}`, { method: "POST" }),
   audit: () => call("/v1/admin/audit"),
   createKey: (scope, env) => call("/v1/admin/keys", { method: "POST", body: JSON.stringify({ Scope: scope, Env: env }) }),
+  qaEnv: () => call("/v1/admin/qa-env"),
+  setQaEnv: (enabled) =>
+    call("/v1/admin/qa-env", { method: "PUT", body: JSON.stringify({ enabled }) }),
 };

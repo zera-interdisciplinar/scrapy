@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zera/scrapy/internal/auth"
+	"github.com/zera/scrapy/internal/cluster"
 	"github.com/zera/scrapy/internal/eval"
 	"github.com/zera/scrapy/internal/hub"
 	"github.com/zera/scrapy/internal/store"
@@ -25,14 +26,15 @@ type Server struct {
 	Hub        *hub.Hub
 	SessionKey []byte
 	UI         http.FileSystem
+	Cluster    *cluster.Client // nil when not in-cluster (local compose)
 }
 
 func (s *Server) Routes() *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery(), gin.Logger())
 
-	loginLimiter := newRateLimiter(10, time.Minute)    // brute-force guard on password auth
-	mobileLimiter := newRateLimiter(120, time.Minute)  // per-IP, mobile clients poll this
+	loginLimiter := newRateLimiter(10, time.Minute)   // brute-force guard on password auth
+	mobileLimiter := newRateLimiter(120, time.Minute) // per-IP, mobile clients poll this
 
 	r.GET("/v1/healthz", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 	r.POST("/v1/auth/login", loginLimiter.middleware(), s.handleLogin)
@@ -56,6 +58,7 @@ func (s *Server) Routes() *gin.Engine {
 	admin.GET("/entries", s.handleListEntries)
 	admin.GET("/audit", s.handleAudit)
 	admin.GET("/scopes", s.handleListScopes)
+	admin.GET("/qa-env", s.handleQaEnvStatus)
 
 	editors := r.Group("/v1/admin", s.sessionAuth(roleEditor))
 	editors.PUT("/entries", s.handleSetEntry)
@@ -65,6 +68,7 @@ func (s *Server) Routes() *gin.Engine {
 	admins := r.Group("/v1/admin", s.sessionAuth(roleAdmin))
 	admins.POST("/keys", s.handleCreateKey)
 	admins.POST("/keys/:prefix/revoke", s.handleRevokeKey)
+	admins.PUT("/qa-env", s.handleQaEnvSet)
 
 	// NoRoute must never hand HTML to an unmatched /v1/* call: a gateway that fails to
 	// strip its own prefix (e.g. Kong forwarding "/qa/scrapy/v1/boot" instead of "/v1/boot")
@@ -533,6 +537,55 @@ func (s *Server) handleCreateKey(c *gin.Context) {
 	}
 	// plaintext key is returned exactly once; only the hash persists
 	c.JSON(http.StatusOK, gin.H{"key": plain})
+}
+
+func (s *Server) handleQaEnvStatus(c *gin.Context) {
+	if s.Cluster == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "cluster control unavailable: not running in kubernetes"})
+		return
+	}
+	st, err := s.Cluster.Status(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, st)
+}
+
+func (s *Server) handleQaEnvSet(c *gin.Context) {
+	if s.Cluster == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "cluster control unavailable: not running in kubernetes"})
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
+		return
+	}
+	before, err := s.Cluster.Status(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	st, err := s.Cluster.SetEnabled(c.Request.Context(), body.Enabled)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	_, _ = s.Store.Pool.Exec(c.Request.Context(), `
+		INSERT INTO audit_log (actor_id, action, before, after)
+		VALUES ($1, 'qa.scale', $2, $3)`,
+		c.GetString("uid"), boolJSON(before.Enabled), boolJSON(st.Enabled))
+	c.JSON(http.StatusOK, st)
+}
+
+func boolJSON(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
 }
 
 // handleRevokeKey supports zero-downtime key rotation: mint a new key, roll it out to the
