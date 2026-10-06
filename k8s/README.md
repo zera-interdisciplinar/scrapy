@@ -71,9 +71,12 @@ kubectl create secret generic scrapy-secrets -n production \
    conectar (comportamento pretendido: ver plano, "subir um pod com configuração errada
    é pior do que não subir").
 2. Secrets acima.
-3. `rbac-qa.yaml` (Role + ServiceAccount no namespace `qa`) e, em production,
-   `rbac.yaml` (ServiceAccount `scrapy`). Sem isso o toggle **Ambiente QA** da UI
-   responde 403 na API do cluster.
+3. `serviceaccount-qa.yaml` (CI aplica) e, em production, `rbac.yaml`
+   (ServiceAccount `scrapy`). O Role/RoleBinding de scale (`rbac-qa.yaml`) **não**
+   entra no GitHub Actions — a SA de deploy não tem `container.roles.create`.
+   Aplique uma vez com um usuário admin:
+   `kubectl apply -f k8s/rbac-qa.yaml`. Sem isso o toggle **Ambiente QA** da UI
+   responde 403 na API do cluster (o resto do scrapy sobe normalmente).
 4. `deployment-qa.yaml` + `service-qa.yaml` (qa) / `deployment.yaml` + `service.yaml`
    (production). Os pods usam `serviceAccountName: scrapy`.
 5. Rota no `infra-gtw-kong` (`manifests/{qa,prod}/scrapy.yaml`).
@@ -120,8 +123,10 @@ A tela **Sistema → Ambiente QA** escala todos os Deployments do namespace `qa`
 - `scrapy` e qualquer nome `scrapy-*` (inclui `scrapy-postgres` — sem o banco a UI morre)
 - qualquer Deployment cujo nome contenha `kong` (o gateway precisa continuar no ar)
 
-O toggle só funciona com o scrapy **dentro do cluster** (ServiceAccount + Role em
-`rbac-qa.yaml`). Em docker compose local a API responde 503. Só o papel `admin` pode
+O toggle só funciona com o scrapy **dentro do cluster** (ServiceAccount + Role).
+O CI cria o ServiceAccount; o Role em `rbac-qa.yaml` precisa de um apply manual
+uma vez (`kubectl apply -f k8s/rbac-qa.yaml`) com um principal que pode criar
+RBAC. Em docker compose local a API responde 503. Só o papel `admin` pode
 mudar o estado; viewer/editor só lêem.
 
 A instância de production também recebe a Role via RoleBinding em `qa`, porque é ela
