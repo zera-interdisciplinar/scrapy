@@ -71,9 +71,12 @@ kubectl create secret generic scrapy-secrets -n production \
    conectar (comportamento pretendido: ver plano, "subir um pod com configuração errada
    é pior do que não subir").
 2. Secrets acima.
-3. `deployment-qa.yaml` + `service-qa.yaml` (qa) / `deployment.yaml` + `service.yaml`
-   (production).
-4. Rota no `infra-gtw-kong` (`manifests/{qa,prod}/scrapy.yaml`).
+3. `rbac-qa.yaml` (Role + ServiceAccount no namespace `qa`) e, em production,
+   `rbac.yaml` (ServiceAccount `scrapy`). Sem isso o toggle **Ambiente QA** da UI
+   responde 403 na API do cluster.
+4. `deployment-qa.yaml` + `service-qa.yaml` (qa) / `deployment.yaml` + `service.yaml`
+   (production). Os pods usam `serviceAccountName: scrapy`.
+5. Rota no `infra-gtw-kong` (`manifests/{qa,prod}/scrapy.yaml`).
 
 O scrapy sobe **antes** de qualquer serviço cliente (`ms-inventory`,
 `ms-administrative-core`, ...) que dependa dele no boot — ver fase 5 do plano.
@@ -108,6 +111,22 @@ percebeu" — porque o serviço nunca estava lendo do banco onde a mudança foi 
 
 Configure o host do scrapy nos manifests de `ms-x` como o FQDN completo do Service em
 `production` (ex: `scrapy.production.svc.cluster.local`), nunca `scrapy` puro.
+
+## Ambiente QA (ligar / desligar pela UI)
+
+A tela **Sistema → Ambiente QA** escala todos os Deployments do namespace `qa` para
+`0` (desligar) ou `1` (ligar). Ficam de fora, de propósito:
+
+- `scrapy` e qualquer nome `scrapy-*` (inclui `scrapy-postgres` — sem o banco a UI morre)
+- qualquer Deployment cujo nome contenha `kong` (o gateway precisa continuar no ar)
+
+O toggle só funciona com o scrapy **dentro do cluster** (ServiceAccount + Role em
+`rbac-qa.yaml`). Em docker compose local a API responde 503. Só o papel `admin` pode
+mudar o estado; viewer/editor só lêem.
+
+A instância de production também recebe a Role via RoleBinding em `qa`, porque é ela
+que os operadores usam no dia a dia. Aplique `k8s/rbac.yaml` no namespace `production`
+antes do primeiro toggle a partir dessa UI.
 
 ## Por que não StatefulSet para o Postgres
 

@@ -501,3 +501,11 @@ textarea.field {
   font-size: 13px;
   color: var(--text-dim);
 }
+
+.btn-primary:disabled,
+.btn-danger:disabled,
+.btn-ghost:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  filter: none;
+}
