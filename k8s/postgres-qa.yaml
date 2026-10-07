@@ -26,6 +26,11 @@ spec:
     metadata:
       labels:
         app: scrapy-postgres
+      annotations:
+        # RWO PVC + Recreate: an Autopilot eviction after QA-off detaches the
+        # disk and the new pod stays Pending. Scrapy healthz does not check the
+        # DB, so the UI looks "up" then dies. Pin this pod next to scrapy.
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
     spec:
       containers:
       - name: postgres
@@ -82,3 +87,14 @@ spec:
       port: 5432
       targetPort: 5432
   type: ClusterIP
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: scrapy-postgres
+  namespace: qa
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: scrapy-postgres

@@ -121,7 +121,13 @@ A tela **Sistema → Ambiente QA** escala todos os Deployments do namespace `qa`
 `0` (desligar) ou `1` (ligar). Ficam de fora, de propósito:
 
 - `scrapy` e qualquer nome `scrapy-*` (inclui `scrapy-postgres` — sem o banco a UI morre)
+- `postgres` (é o banco do Kong neste cluster: `postgres.qa.svc` — scale-to-0 derruba o IP público)
 - qualquer Deployment cujo nome contenha `kong` (o gateway precisa continuar no ar)
+
+Desligar o QA esvazia o namespace; o Autopilot então tenta empacotar o que sobrou.
+`scrapy` e `scrapy-postgres` levam `safe-to-evict: "false"` e PDB `minAvailable: 1`
+para não serem evictados — senão o PVC RWO do postgres descola, o pod fica
+Pending, e a UI some depois de alguns minutos (o `/v1/healthz` não checa o banco).
 
 O toggle só funciona com o scrapy **dentro do cluster** (ServiceAccount + Role).
 O CI cria o ServiceAccount; o Role em `rbac-qa.yaml` precisa de um apply manual
