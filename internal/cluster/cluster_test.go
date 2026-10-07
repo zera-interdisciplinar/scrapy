@@ -16,6 +16,7 @@ func TestProtected(t *testing.T) {
 		"kong":                   true,
 		"kong-proxy":             true,
 		"infra-gtw-kong":         true,
+		"postgres":               true, // Kong DB in qa
 		"ms-inventory":           false,
 		"ms-administrative-core": false,
 		"ms-inventory-postgres":  false,

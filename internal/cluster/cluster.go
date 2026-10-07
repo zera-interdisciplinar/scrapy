@@ -45,13 +45,16 @@ type Client struct {
 	Namespace string
 }
 
-// Protected deployments are never scaled: scrapy (and its postgres), plus anything
-// whose name contains "kong". Turning QA off must not take down the control plane
-// or the gateway used to turn it back on.
+// Protected deployments are never scaled: scrapy (and its postgres), Kong's
+// database in this cluster (`postgres` in qa), plus anything whose name contains
+// "kong". Turning QA off must not take down the control plane or the gateway.
 func Protected(name string) bool {
 	n := strings.ToLower(name)
 	if n == "scrapy" || strings.HasPrefix(n, "scrapy-") {
 		return true
+	}
+	if n == "postgres" {
+		return true // Kong dataplane uses postgres.qa.svc — scale-to-0 kills the public IP
 	}
 	return strings.Contains(n, "kong")
 }
