@@ -18,6 +18,10 @@ spec:
     metadata:
       labels:
         app: scrapy
+      annotations:
+        # QA-off leaves this pod almost alone in the namespace. Without this,
+        # Autopilot packs/evicts it after ~10m and the admin UI disappears.
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
     spec:
       serviceAccountName: scrapy
       containers:
