@@ -2,8 +2,7 @@ name: Deploy Production
 
 on:
   push:
-    branches:
-      - main
+    tags: ['v*.*.*']
 
 env:
   REGISTRY: southamerica-east1-docker.pkg.dev
@@ -45,15 +44,15 @@ jobs:
       - name: Build and Push Docker Image
         run: |
           docker build \
+            --tag ${{ env.IMAGE }}:${{ github.ref_name }} \
             --tag ${{ env.IMAGE }}:latest \
-            --tag ${{ env.IMAGE }}:prod-${{ github.sha }} \
             .
+          docker push ${{ env.IMAGE }}:${{ github.ref_name }}
           docker push ${{ env.IMAGE }}:latest
-          docker push ${{ env.IMAGE }}:prod-${{ github.sha }}
 
       - name: Deploy to GKE
         run: |
-          sed -i "s|IMAGE_TAG|prod-${{ github.sha }}|g" k8s/deployment.yaml
+          sed -i "s|IMAGE_TAG|${{ github.ref_name }}|g" k8s/deployment.yaml
           kubectl apply -f k8s/rbac.yaml
           kubectl apply -f k8s/deployment.yaml -n production
           kubectl apply -f k8s/service.yaml -n production
@@ -63,5 +62,5 @@ jobs:
         run: |
           kubectl annotate deployment scrapy \
             -n production \
-            kubernetes.io/change-cause="Production deploy — commit ${{ github.sha }}" \
+            kubernetes.io/change-cause="Release ${{ github.ref_name }} — commit ${{ github.sha }}" \
             --overwrite
