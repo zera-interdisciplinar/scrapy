@@ -19,7 +19,12 @@ import (
 	"time"
 )
 
-var ErrUnavailable = errors.New("not running in-cluster")
+var (
+	ErrUnavailable   = errors.New("not running in-cluster")
+	ErrProtected     = errors.New("deployment is protected")
+	ErrBadReplicas   = errors.New("replicas must be between 0 and 20")
+	ErrUnknownDeploy = errors.New("unknown deployment")
+)
 
 const (
 	saTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
@@ -134,6 +139,35 @@ func (c *Client) SetEnabled(ctx context.Context, enabled bool) (*Status, error) 
 		if err := c.scale(ctx, d.Name, want); err != nil {
 			return nil, err
 		}
+	}
+	return c.Status(ctx)
+}
+
+// ScaleDeployment sets replicas for one unprotected Deployment. Used by the
+// production UI so operators can pick a count instead of only 0/1 for the whole namespace.
+func (c *Client) ScaleDeployment(ctx context.Context, name string, replicas int) (*Status, error) {
+	if replicas < 0 || replicas > 20 {
+		return nil, ErrBadReplicas
+	}
+	if Protected(name) {
+		return nil, ErrProtected
+	}
+	deps, err := c.list(ctx)
+	if err != nil {
+		return nil, err
+	}
+	found := false
+	for _, d := range deps {
+		if d.Name == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, ErrUnknownDeploy
+	}
+	if err := c.scale(ctx, name, replicas); err != nil {
+		return nil, err
 	}
 	return c.Status(ctx)
 }

@@ -291,6 +291,17 @@ body {
   vertical-align: middle;
 }
 
+.replica-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.replica-input {
+  width: 72px;
+  padding: 6px 8px;
+}
+
 .badge {
   display: inline-block;
   font-size: 11px;
