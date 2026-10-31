@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: scrapy
+      POSTGRES_USER: scrapy
+      POSTGRES_PASSWORD: scrapy_dev_only
+    ports:
+      - "5433:5432"
+    volumes:
+      - scrapy_pg:/var/lib/postgresql/data
+
+volumes:
+  scrapy_pg:

@@ -1,0 +1,30 @@
+# Lets the scrapy pod in qa list/patch Deployments in production so the admin
+# UI can scale that namespace to 0/1. GitHub Actions cannot create Roles in
+# this cluster — apply this file once with a principal that has
+# container.roles.create.
+#
+# The operator UI is the scrapy running in qa. Without this Role, /v1/admin/prod-env
+# returns 403 from the cluster API; the QA toggle keeps working.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: scrapy-scale-prod
+  namespace: production
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments", "deployments/scale"]
+  verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: scrapy-scale-prod
+  namespace: production
+subjects:
+- kind: ServiceAccount
+  name: scrapy
+  namespace: qa
+roleRef:
+  kind: Role
+  name: scrapy-scale-prod
+  apiGroup: rbac.authorization.k8s.io
