@@ -101,7 +101,9 @@ do pipeline de CI.
 A tela **Sistema → Ambientes** escala os Deployments de um namespace para `0`
 (desligar) ou `1` (ligar). Há um card para `qa` e outro para `production`.
 Ligar sempre volta para **1** réplica — um Deployment que rodava com mais de uma
-não recupera a contagem anterior. Ficam de fora, de propósito, nos dois namespaces:
+não recupera a contagem anterior. No card de **produção**, cada serviço não
+protegido tem um campo de réplicas (0–20) além do ligar/desligar do namespace.
+Ficam de fora, de propósito, nos dois namespaces:
 
 - `scrapy` e qualquer nome `scrapy-*` (inclui `scrapy-postgres` — sem o banco a UI morre)
 - `postgres` (em `qa` é o banco do Kong: `postgres.qa.svc` — scale-to-0 derruba o IP público)

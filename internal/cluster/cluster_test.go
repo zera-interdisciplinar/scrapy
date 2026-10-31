@@ -136,4 +136,25 @@ func scaleNamespace(t *testing.T, ns string) {
 	if patched["ms-inventory"] != 1 {
 		t.Fatalf("ms-inventory replicas=%d want 1", patched["ms-inventory"])
 	}
+
+	st, err = c.ScaleDeployment(ctx, "ms-inventory", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patched["ms-inventory"] != 3 {
+		t.Fatalf("ms-inventory replicas=%d want 3", patched["ms-inventory"])
+	}
+	if !st.Enabled {
+		t.Fatal("expected enabled with 3 replicas")
+	}
+
+	if _, err := c.ScaleDeployment(ctx, "scrapy", 2); err != ErrProtected {
+		t.Fatalf("scale scrapy err=%v want ErrProtected", err)
+	}
+	if _, err := c.ScaleDeployment(ctx, "ms-inventory", 99); err != ErrBadReplicas {
+		t.Fatalf("scale 99 err=%v want ErrBadReplicas", err)
+	}
+	if _, err := c.ScaleDeployment(ctx, "no-such", 1); err != ErrUnknownDeploy {
+		t.Fatalf("scale missing err=%v want ErrUnknownDeploy", err)
+	}
 }

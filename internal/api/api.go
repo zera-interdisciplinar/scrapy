@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -63,6 +65,7 @@ func (s *Server) Routes() *gin.Engine {
 	admins.POST("/keys/:prefix/revoke", s.handleRevokeKey)
 	admins.PUT("/qa-env", s.handleClusterSet(s.QA, "qa.scale"))
 	admins.PUT("/prod-env", s.handleClusterSet(s.Prod, "prod.scale"))
+	admins.PUT("/prod-env/scale", s.handleClusterScale(s.Prod, "prod.scale.one"))
 
 	// NoRoute must never hand HTML to an unmatched /v1/* call: a gateway that fails to
 	// strip its own prefix (e.g. Kong forwarding "/qa/scrapy/v1/boot" instead of "/v1/boot")
@@ -497,6 +500,55 @@ func (s *Server) handleClusterSet(cl *cluster.Client, action string) gin.Handler
 			INSERT INTO audit_log (actor_id, action, before, after)
 			VALUES ($1, $2, $3, $4)`,
 			c.GetString("uid"), action, boolJSON(before.Enabled), boolJSON(st.Enabled))
+		c.JSON(http.StatusOK, st)
+	}
+}
+
+func (s *Server) handleClusterScale(cl *cluster.Client, action string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if cl == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "cluster control unavailable: not running in kubernetes"})
+			return
+		}
+		var body struct {
+			Name     string `json:"name"`
+			Replicas int    `json:"replicas"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil || body.Name == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
+			return
+		}
+		before, err := cl.Status(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+		old := -1
+		for _, d := range before.Deployments {
+			if d.Name == body.Name {
+				old = d.Replicas
+				break
+			}
+		}
+		st, err := cl.ScaleDeployment(c.Request.Context(), body.Name, body.Replicas)
+		if err != nil {
+			if errors.Is(err, cluster.ErrProtected) || errors.Is(err, cluster.ErrBadReplicas) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			if errors.Is(err, cluster.ErrUnknownDeploy) {
+				c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+		_, _ = s.Store.Pool.Exec(c.Request.Context(), `
+			INSERT INTO audit_log (actor_id, action, before, after)
+			VALUES ($1, $2, $3, $4)`,
+			c.GetString("uid"), action,
+			fmt.Sprintf("%s=%d", body.Name, old),
+			fmt.Sprintf("%s=%d", body.Name, body.Replicas))
 		c.JSON(http.StatusOK, st)
 	}
 }

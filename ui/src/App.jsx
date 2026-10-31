@@ -571,7 +571,38 @@ function Sidebar({ scopes, activeScope, onSelect, onAddScope, panel, onShowAudit
   );
 }
 
-function EnvControl({ title, namespace, offLabel, onLabel, confirmOff, confirmOn, loadStatus, setEnabled, canToggle }) {
+function ReplicaCell({ name, replicas, disabled, busy, onScale }) {
+  const [draft, setDraft] = useState(String(replicas));
+  useEffect(() => { setDraft(String(replicas)); }, [replicas]);
+  const n = Number(draft);
+  const dirty = Number.isInteger(n) && n !== replicas;
+
+  return (
+    <div className="replica-cell">
+      <input
+        className="field replica-input"
+        type="number"
+        min="0"
+        max="20"
+        value={draft}
+        disabled={disabled || busy}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && dirty && n >= 0 && n <= 20) onScale(name, n);
+        }}
+      />
+      <button
+        className="btn btn-ghost"
+        disabled={disabled || busy || !dirty || n < 0 || n > 20}
+        onClick={() => onScale(name, n)}
+      >
+        aplicar
+      </button>
+    </div>
+  );
+}
+
+function EnvControl({ title, namespace, offLabel, onLabel, confirmOff, confirmOn, loadStatus, setEnabled, canToggle, onScale }) {
   const [status, setStatus] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -602,6 +633,19 @@ function EnvControl({ title, namespace, offLabel, onLabel, confirmOff, confirmOn
     }
   }
 
+  async function scaleOne(name, replicas) {
+    if (!onScale) return;
+    setBusy(true);
+    setErr("");
+    try {
+      setStatus(await onScale(name, replicas));
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section style={{ marginBottom: 28 }}>
       <div className="main-title" style={{ marginBottom: 16 }}>{title}</div>
@@ -613,6 +657,7 @@ function EnvControl({ title, namespace, offLabel, onLabel, confirmOff, confirmOn
         scrapy, qualquer <code>scrapy-*</code>, o Deployment <code>postgres</code> e qualquer
         nome com &quot;kong&quot;. Ligar volta cada um para <strong>1</strong> réplica — não
         restaura uma contagem maior que isso.
+        {onScale ? " Em produção dá para definir a quantidade de réplicas de cada serviço (0 a 20)." : ""}
       </p>
       <div className="toolbar">
         <button className="btn btn-ghost" onClick={load} disabled={busy}>recarregar</button>
@@ -634,13 +679,33 @@ function EnvControl({ title, namespace, offLabel, onLabel, confirmOff, confirmOn
       {status?.deployments?.length ? (
         <table className="card-table">
           <thead>
-            <tr><th>deployment</th><th>réplicas</th><th></th></tr>
+            <tr>
+              <th>deployment</th>
+              <th>réplicas</th>
+              {onScale ? <th>scale</th> : null}
+              <th></th>
+            </tr>
           </thead>
           <tbody>
             {status.deployments.map((d) => (
               <tr key={d.name}>
                 <td>{d.name}</td>
                 <td>{d.replicas}</td>
+                {onScale ? (
+                  <td>
+                    {d.protected
+                      ? null
+                      : (
+                        <ReplicaCell
+                          name={d.name}
+                          replicas={d.replicas}
+                          disabled={!canToggle}
+                          busy={busy}
+                          onScale={scaleOne}
+                        />
+                      )}
+                  </td>
+                ) : null}
                 <td>
                   {d.protected
                     ? <span className="badge">protegido</span>
@@ -681,6 +746,7 @@ function AmbientesView({ canToggle }) {
         loadStatus={api.prodEnv}
         setEnabled={api.setProdEnv}
         canToggle={canToggle}
+        onScale={api.scaleProd}
       />
     </div>
   );

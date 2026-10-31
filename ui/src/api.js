@@ -31,4 +31,6 @@ export const api = {
   prodEnv: () => call("/v1/admin/prod-env"),
   setProdEnv: (enabled) =>
     call("/v1/admin/prod-env", { method: "PUT", body: JSON.stringify({ enabled }) }),
+  scaleProd: (name, replicas) =>
+    call("/v1/admin/prod-env/scale", { method: "PUT", body: JSON.stringify({ name, replicas }) }),
 };
