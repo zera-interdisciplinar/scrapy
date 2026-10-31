@@ -93,10 +93,15 @@ O editor de segmentação conhece `userId`, `unitId` ("sede") e `role` ("cargo")
 
 ## Ambientes Kubernetes
 
-**Sistema → Ambientes** escala os Deployments de `qa` e de `production` para 0 ou 1.
-Ficam de fora `scrapy`, `scrapy-*`, o Deployment `postgres` e qualquer nome com `kong`.
-Ligar volta para **1** réplica, não para a contagem anterior. Só `admin` escreve.
-Detalhe e o apply manual de `k8s/rbac-qa.yaml` / `k8s/rbac-prod.yaml`: `k8s/README.md`.
+**Sistema → Ambientes** liga e desliga os namespaces `qa` e `production` (scale
+em massa para 0 ou 1). Ficam de fora `scrapy`, `scrapy-*`, o Deployment `postgres`
+e qualquer nome com `kong`. Ligar volta para **1** réplica, não para a contagem
+anterior.
+
+No card de **produção**, cada Deployment não protegido também tem um campo de
+réplicas (0–20): `PUT /v1/admin/prod-env/scale` com `{ "name", "replicas" }`.
+Só `admin` escreve. Detalhe e o apply manual de `k8s/rbac-qa.yaml` /
+`k8s/rbac-prod.yaml`: `k8s/README.md`.
 
 ## Backup de credenciais
 
