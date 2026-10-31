@@ -1,0 +1,15 @@
+/target
+node_modules/
+ui/dist/*
+!ui/dist/.gitkeep
+*.env
+.env
+scrapy-bin
+
+# IDE / build artifacts
+.classpath
+.project
+.settings/
+target/
+__pycache__/
+*.pyc

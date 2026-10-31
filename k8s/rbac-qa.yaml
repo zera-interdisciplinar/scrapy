@@ -1,0 +1,33 @@
+# Lets scrapy list/patch Deployments in qa so the admin UI can scale the
+# environment to 0/1. GitHub Actions cannot create Roles in this cluster —
+# apply this file once with a principal that has container.roles.create.
+#
+# The Role stays in qa. The operator UI is the scrapy ServiceAccount in qa.
+# The production ServiceAccount binding is kept so a future production pod can
+# read the same namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: scrapy-scale-qa
+  namespace: qa
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments", "deployments/scale"]
+  verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: scrapy-scale-qa
+  namespace: qa
+subjects:
+- kind: ServiceAccount
+  name: scrapy
+  namespace: qa
+- kind: ServiceAccount
+  name: scrapy
+  namespace: production
+roleRef:
+  kind: Role
+  name: scrapy-scale-qa
+  apiGroup: rbac.authorization.k8s.io
