@@ -242,6 +242,14 @@ function EntryRow({ entry, scope, env, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
+  useEffect(() => {
+    setValue(displayValueForType(entry.type, entry.value));
+    setRules(entry.rules ?? []);
+    setBootOnly(entry.bootOnly ?? false);
+    setShowRules(false);
+    setErr("");
+  }, [entry.id, entry.type, entry.value, entry.rules, entry.bootOnly]);
+
   async function save() {
     if (env === "prod" && !confirm(`Confirma alterar "${entry.key}" em PRODUÇÃO?`)) return;
     setSaving(true);
@@ -514,7 +522,7 @@ function EntryTable({ entries, scope, env, onSaved, emptyLabel }) {
       </thead>
       <tbody>
         {entries.map((e) => (
-          <EntryRow key={`${env}:${e.key}`} entry={e} scope={scope} env={env} onSaved={onSaved} />
+          <EntryRow key={`${env}:${e.id || e.key}`} entry={e} scope={scope} env={env} onSaved={onSaved} />
         ))}
       </tbody>
     </table>
@@ -814,7 +822,21 @@ function Dashboard({ role, onLogout }) {
     }
   }
 
-  useEffect(() => { load(); }, [scope, env]);
+  useEffect(() => {
+    if (!scope) return;
+    let cancelled = false;
+    setEntries([]);
+    api.listEntries(scope, env)
+      .then((rows) => {
+        if (!cancelled) setEntries(rows);
+      })
+      .catch((e) => {
+        if (!cancelled) setMsg(e.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scope, env]);
 
   function addScope(name) {
     setScopes((prev) => (prev.includes(name) ? prev : [...prev, name]));
