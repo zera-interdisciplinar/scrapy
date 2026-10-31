@@ -52,6 +52,12 @@ test("displayValueForType: valor JSON válido é exibido normalmente", () => {
   assert.equal(displayValueForType("string", '"olá"'), "olá");
 });
 
+test("displayValueForType: valor já parseado pelo fetch (não é string JSON)", () => {
+  assert.equal(displayValueForType("bool", true), "true");
+  assert.equal(displayValueForType("string", "https://prod.example/api"), "https://prod.example/api");
+  assert.equal(displayValueForType("json", { a: 1 }), '{"a":1}');
+});
+
 test("condValueToText/textToCondValue: op 'in' vira array separado por vírgula, ida e volta", () => {
   const cond = { attr: "country", op: "in", value: ["BR", "PT"] };
   assert.equal(condValueToText(cond), "BR, PT");
