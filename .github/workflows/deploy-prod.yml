@@ -1,0 +1,67 @@
+name: Deploy Production
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  REGISTRY: southamerica-east1-docker.pkg.dev
+  IMAGE: southamerica-east1-docker.pkg.dev/zera-509513/repo/scrapy
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/366904660850/locations/global/workloadIdentityPools/zera-pool/providers/github-provider
+          service_account: github-actions-deploy@zera-509513.iam.gserviceaccount.com
+
+      - uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: zera-cluster
+          location: southamerica-east1
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Run Tests
+        run: go test ./...
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      - name: Build and Push Docker Image
+        run: |
+          docker build \
+            --tag ${{ env.IMAGE }}:latest \
+            --tag ${{ env.IMAGE }}:prod-${{ github.sha }} \
+            .
+          docker push ${{ env.IMAGE }}:latest
+          docker push ${{ env.IMAGE }}:prod-${{ github.sha }}
+
+      - name: Deploy to GKE
+        run: |
+          sed -i "s|IMAGE_TAG|prod-${{ github.sha }}|g" k8s/deployment.yaml
+          kubectl apply -f k8s/rbac.yaml
+          kubectl apply -f k8s/deployment.yaml -n production
+          kubectl apply -f k8s/service.yaml -n production
+          kubectl rollout status deployment/scrapy -n production --timeout=180s
+
+      - name: Annotate Deployment
+        run: |
+          kubectl annotate deployment scrapy \
+            -n production \
+            kubernetes.io/change-cause="Production deploy — commit ${{ github.sha }}" \
+            --overwrite
