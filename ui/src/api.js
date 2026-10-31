@@ -28,4 +28,7 @@ export const api = {
   qaEnv: () => call("/v1/admin/qa-env"),
   setQaEnv: (enabled) =>
     call("/v1/admin/qa-env", { method: "PUT", body: JSON.stringify({ enabled }) }),
+  prodEnv: () => call("/v1/admin/prod-env"),
+  setProdEnv: (enabled) =>
+    call("/v1/admin/prod-env", { method: "PUT", body: JSON.stringify({ enabled }) }),
 };

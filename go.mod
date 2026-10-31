@@ -3,7 +3,6 @@ module github.com/zera/scrapy
 go 1.25
 
 require (
-	github.com/coder/websocket v1.8.12
 	github.com/gin-gonic/gin v1.10.0
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/jackc/pgx/v5 v5.6.0

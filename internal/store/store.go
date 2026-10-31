@@ -165,8 +165,8 @@ func (s *Store) decrypt(enc string) ([]byte, error) {
 	return gcm.Open(nil, nonce, ct, nil)
 }
 
-// ListByScope returns every entry for a scope/environment, decrypting secrets. Used for
-// /v1/bootstrap (env replacement) and the WS `state` message.
+// ListByScope returns every entry for a scope/environment, decrypting secrets. Used by
+// the admin UI.
 func (s *Store) ListByScope(ctx context.Context, scope, env string) ([]Entry, error) {
 	return s.listByScope(ctx, scope, env, nil)
 }
@@ -383,30 +383,4 @@ func (s *Store) KillScope(ctx context.Context, scope, env, actorID string) (int,
 			VALUES ($1, 'scope.kill', $2, 'false')`, nullable(actorID), fmt.Sprintf("%s/%s", scope, env))
 	}
 	return int(tag.RowsAffected()), nil
-}
-
-// UpsertInstance records/refreshes a connected pod (WS hello + periodic touch).
-func (s *Store) UpsertInstance(ctx context.Context, scope, env, instance, image string) error {
-	_, err := s.Pool.Exec(ctx, `
-		INSERT INTO instances (scope_id, env_id, instance, image, last_seen)
-		SELECT s.id, en.id, $3, $4, now() FROM scopes s, environments en
-		WHERE s.name=$1 AND en.name=$2
-		ON CONFLICT DO NOTHING`, scope, env, instance, image)
-	return err
-}
-
-func (s *Store) AckInstance(ctx context.Context, instance string, version int) error {
-	_, err := s.Pool.Exec(ctx, `
-		UPDATE instances SET acked_version=$2, last_seen=now() WHERE instance=$1`, instance, version)
-	return err
-}
-
-// ResolveNames looks up scope/environment names by id. Scopes/envs are a handful of rows
-// created once (services + "qa"/"prod"), so a direct query per notification is cheap and
-// needs no invalidation logic.
-func (s *Store) ResolveNames(ctx context.Context, scopeID, envID string) (scope, env string, ok bool) {
-	err := s.Pool.QueryRow(ctx, `
-		SELECT s.name, e.name FROM scopes s, environments e
-		WHERE s.id = $1 AND e.id = $2`, scopeID, envID).Scan(&scope, &env)
-	return scope, env, err == nil
 }
