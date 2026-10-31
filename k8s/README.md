@@ -94,7 +94,10 @@ Dentro de uma instância, `qa`/`prod` é o env da entry e da api key: uma chave 
 `Env=qa` só lê entries `qa`. O app de QA e o app de produção podem apontar para a
 mesma instância (a de produção, quando existir) e diferir só no env da key. A
 instância no namespace `qa` é o painel que liga e desliga os namespaces, e o alvo
-do pipeline de CI.
+do pipeline de CI (`deploy-qa.yml` no push em `qa`). Produção sobe com
+`deploy-prod.yml` no push em `main`: substitui `IMAGE_TAG` por `prod-<sha>`,
+aplica ServiceAccount (`rbac.yaml`), Deployment e Service, e espera o rollout.
+`rbac-prod.yaml` continua apply manual.
 
 ## Ambientes (ligar / desligar pela UI)
 
