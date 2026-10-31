@@ -20,12 +20,20 @@ export function parseValueForType(type, raw) {
 }
 
 export function displayValueForType(type, jsonRaw) {
+  if (jsonRaw == null) return "";
+  // fetch já parseia o JSON: string/number/object, não um blob de texto.
+  if (typeof jsonRaw !== "string") {
+    if (isFreeText(type)) return String(jsonRaw);
+    return JSON.stringify(jsonRaw);
+  }
   try {
-    const parsed = JSON.parse(jsonRaw ?? "null");
-    return isFreeText(type) ? (parsed ?? "") : JSON.stringify(parsed);
+    const parsed = JSON.parse(jsonRaw);
+    if (isFreeText(type)) {
+      return parsed == null ? "" : typeof parsed === "string" ? parsed : String(parsed);
+    }
+    return JSON.stringify(parsed);
   } catch {
-    // dado legado gravado sem passar pela API (ex: inserido direto no banco), não é JSON válido
-    return jsonRaw ?? "";
+    return jsonRaw;
   }
 }
 
