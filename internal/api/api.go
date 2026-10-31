@@ -1,5 +1,5 @@
-// Package api wires HTTP handlers (Gin) for the three consumer classes: admin UI (cookie
-// session + RBAC), SDKs (API key, bootstrap + WebSocket), and mobile (API key, boot + flags).
+// Package api wires HTTP handlers (Gin) for the admin UI (cookie session + RBAC) and the
+// mobile app (API key, boot + flags).
 package api
 
 import (
@@ -10,23 +10,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 	"github.com/gin-gonic/gin"
 
 	"github.com/zera/scrapy/internal/auth"
 	"github.com/zera/scrapy/internal/cluster"
 	"github.com/zera/scrapy/internal/eval"
-	"github.com/zera/scrapy/internal/hub"
 	"github.com/zera/scrapy/internal/store"
 )
 
 type Server struct {
 	Store      *store.Store
-	Hub        *hub.Hub
 	SessionKey []byte
 	UI         http.FileSystem
-	Cluster    *cluster.Client // nil when not in-cluster (local compose)
+	QA         *cluster.Client // nil when not in-cluster (local compose)
+	Prod       *cluster.Client // nil when not in-cluster (local compose)
 }
 
 func (s *Server) Routes() *gin.Engine {
@@ -36,19 +33,14 @@ func (s *Server) Routes() *gin.Engine {
 	loginLimiter := newRateLimiter(10, time.Minute)   // brute-force guard on password auth
 	mobileLimiter := newRateLimiter(120, time.Minute) // per-IP, mobile clients poll this
 
-	r.GET("/v1/healthz", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+	r.GET("/v1/healthz", s.handleHealthz)
 	r.POST("/v1/auth/login", loginLimiter.middleware(), s.handleLogin)
 	r.POST("/v1/auth/logout", s.sessionAuth(roleViewer), s.handleLogout)
 	r.GET("/v1/auth/me", s.sessionAuth(roleViewer), s.handleMe)
 
-	sdk := r.Group("/v1", s.apiKeyAuth())
-	sdk.GET("/bootstrap", s.handleBootstrap)
-	sdk.GET("/connect", s.handleConnect)
-
-	// mobile: same api-key mechanism as the SDKs, not a free-form scope in the body — a
-	// client key is meant to be embedded in a public app (anyone can extract it), so the
-	// key only ever grants read on the one scope/env it was minted for, and the endpoint
-	// is rate-limited per IP on top of that.
+	// mobile: a client key is meant to be embedded in a public app (anyone can extract it),
+	// so the key only ever grants read on the one scope/env it was minted for, and the
+	// endpoint is rate-limited per IP on top of that.
 	// /v1/boot: app startup, before login — envs only (entries flagged boot_only).
 	// /v1/flags: after login — flags/content, general or per-user via attrs-matched rules.
 	r.POST("/v1/boot", mobileLimiter.middleware(), s.apiKeyAuth(), s.handleBoot)
@@ -58,7 +50,8 @@ func (s *Server) Routes() *gin.Engine {
 	admin.GET("/entries", s.handleListEntries)
 	admin.GET("/audit", s.handleAudit)
 	admin.GET("/scopes", s.handleListScopes)
-	admin.GET("/qa-env", s.handleQaEnvStatus)
+	admin.GET("/qa-env", s.handleClusterStatus(s.QA))
+	admin.GET("/prod-env", s.handleClusterStatus(s.Prod))
 
 	editors := r.Group("/v1/admin", s.sessionAuth(roleEditor))
 	editors.PUT("/entries", s.handleSetEntry)
@@ -68,7 +61,8 @@ func (s *Server) Routes() *gin.Engine {
 	admins := r.Group("/v1/admin", s.sessionAuth(roleAdmin))
 	admins.POST("/keys", s.handleCreateKey)
 	admins.POST("/keys/:prefix/revoke", s.handleRevokeKey)
-	admins.PUT("/qa-env", s.handleQaEnvSet)
+	admins.PUT("/qa-env", s.handleClusterSet(s.QA, "qa.scale"))
+	admins.PUT("/prod-env", s.handleClusterSet(s.Prod, "prod.scale"))
 
 	// NoRoute must never hand HTML to an unmatched /v1/* call: a gateway that fails to
 	// strip its own prefix (e.g. Kong forwarding "/qa/scrapy/v1/boot" instead of "/v1/boot")
@@ -232,94 +226,16 @@ func (s *Server) handleLogout(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// --- SDK: bootstrap (replaces env:) ---
-
-func (s *Server) handleBootstrap(c *gin.Context) {
-	scope, env := c.GetString("scope"), c.GetString("env")
-	entries, err := s.Store.ListByScope(c.Request.Context(), scope, env)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+func (s *Server) handleHealthz(c *gin.Context) {
+	if s.Store == nil || s.Store.Pool == nil {
+		c.String(http.StatusServiceUnavailable, "db unavailable")
 		return
 	}
-	out := make(map[string]json.RawMessage, len(entries))
-	for _, e := range entries {
-		out[e.Key] = e.Value
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-// --- SDK: WebSocket (hello/state/change/ack) ---
-
-type helloMsg struct {
-	Type     string   `json:"type"`
-	Scope    string   `json:"scope"`
-	Instance string   `json:"instance"`
-	Image    string   `json:"image"`
-	Keys     []string `json:"keys"`
-}
-
-type stateMsg struct {
-	Type    string                     `json:"type"`
-	Entries map[string]json.RawMessage `json:"entries"`
-	Version int                        `json:"version"`
-}
-
-type ackMsg struct {
-	Type    string `json:"type"`
-	Version int    `json:"version"`
-}
-
-func (s *Server) handleConnect(c *gin.Context) {
-	scope, env := c.GetString("scope"), c.GetString("env")
-
-	conn, err := websocket.Accept(c.Writer, c.Request, nil)
-	if err != nil {
+	if err := s.Store.Pool.Ping(c.Request.Context()); err != nil {
+		c.String(http.StatusServiceUnavailable, "db unavailable")
 		return
 	}
-	wsCtx := c.Request.Context()
-
-	cl := &hub.Client{Send: make(chan []byte, 32)}
-
-	var hello helloMsg
-	if err := wsjson.Read(wsCtx, conn, &hello); err == nil {
-		cl.Instance = hello.Instance
-		_ = s.Store.UpsertInstance(wsCtx, scope, env, hello.Instance, hello.Image)
-	}
-
-	entries, err := s.Store.ListByScope(wsCtx, scope, env)
-	if err == nil {
-		state := stateMsg{Type: "state", Entries: map[string]json.RawMessage{}}
-		maxVer := 0
-		for _, e := range entries {
-			state.Entries[e.Key] = e.Value
-			if e.Version > maxVer {
-				maxVer = e.Version
-			}
-		}
-		state.Version = maxVer
-		wsjson.Write(wsCtx, conn, state)
-	}
-
-	s.Hub.Register(scope, env, cl)
-	defer s.Hub.Unregister(scope, env, cl)
-
-	go func() {
-		for msg := range cl.Send {
-			if conn.Write(wsCtx, websocket.MessageText, msg) != nil {
-				return
-			}
-		}
-	}()
-
-	for {
-		var ack ackMsg
-		if err := wsjson.Read(wsCtx, conn, &ack); err != nil {
-			return
-		}
-		if ack.Type == "ack" && cl.Instance != "" {
-			_ = s.Store.AckInstance(wsCtx, cl.Instance, ack.Version)
-		}
-	}
+	c.String(http.StatusOK, "ok")
 }
 
 // --- mobile ---
@@ -539,46 +455,50 @@ func (s *Server) handleCreateKey(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"key": plain})
 }
 
-func (s *Server) handleQaEnvStatus(c *gin.Context) {
-	if s.Cluster == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "cluster control unavailable: not running in kubernetes"})
-		return
+func (s *Server) handleClusterStatus(cl *cluster.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if cl == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "cluster control unavailable: not running in kubernetes"})
+			return
+		}
+		st, err := cl.Status(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, st)
 	}
-	st, err := s.Cluster.Status(c.Request.Context())
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, st)
 }
 
-func (s *Server) handleQaEnvSet(c *gin.Context) {
-	if s.Cluster == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "cluster control unavailable: not running in kubernetes"})
-		return
+func (s *Server) handleClusterSet(cl *cluster.Client, action string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if cl == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "cluster control unavailable: not running in kubernetes"})
+			return
+		}
+		var body struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
+			return
+		}
+		before, err := cl.Status(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+		st, err := cl.SetEnabled(c.Request.Context(), body.Enabled)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+		_, _ = s.Store.Pool.Exec(c.Request.Context(), `
+			INSERT INTO audit_log (actor_id, action, before, after)
+			VALUES ($1, $2, $3, $4)`,
+			c.GetString("uid"), action, boolJSON(before.Enabled), boolJSON(st.Enabled))
+		c.JSON(http.StatusOK, st)
 	}
-	var body struct {
-		Enabled bool `json:"enabled"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
-		return
-	}
-	before, err := s.Cluster.Status(c.Request.Context())
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-	st, err := s.Cluster.SetEnabled(c.Request.Context(), body.Enabled)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-	_, _ = s.Store.Pool.Exec(c.Request.Context(), `
-		INSERT INTO audit_log (actor_id, action, before, after)
-		VALUES ($1, 'qa.scale', $2, $3)`,
-		c.GetString("uid"), boolJSON(before.Enabled), boolJSON(st.Enabled))
-	c.JSON(http.StatusOK, st)
 }
 
 func boolJSON(v bool) string {

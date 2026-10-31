@@ -29,20 +29,31 @@ func TestProtected(t *testing.T) {
 }
 
 func TestStatusAndScale(t *testing.T) {
+	for _, ns := range []string{"qa", "production"} {
+		t.Run(ns, func(t *testing.T) {
+			scaleNamespace(t, ns)
+		})
+	}
+}
+
+func scaleNamespace(t *testing.T, ns string) {
 	replicas := map[string]int{
 		"ms-inventory":    1,
 		"scrapy":          1,
 		"scrapy-postgres": 1,
 		"kong-proxy":      2,
+		"postgres":        1,
 	}
 	patched := map[string]int{}
 
+	listPath := "/apis/apps/v1/namespaces/" + ns + "/deployments"
+	scalePrefix := listPath + "/"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
 			t.Errorf("missing bearer, got %q", got)
 		}
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/apps/v1/namespaces/qa/deployments":
+		case r.Method == http.MethodGet && r.URL.Path == listPath:
 			items := []any{}
 			for name, n := range replicas {
 				items = append(items, map[string]any{
@@ -52,14 +63,13 @@ func TestStatusAndScale(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
 		case r.Method == http.MethodPatch:
-			const prefix = "/apis/apps/v1/namespaces/qa/deployments/"
 			const suffix = "/scale"
 			path := r.URL.Path
-			if len(path) < len(prefix)+len(suffix) || path[:len(prefix)] != prefix || path[len(path)-len(suffix):] != suffix {
+			if len(path) < len(scalePrefix)+len(suffix) || path[:len(scalePrefix)] != scalePrefix || path[len(path)-len(suffix):] != suffix {
 				http.NotFound(w, r)
 				return
 			}
-			name := path[len(prefix) : len(path)-len(suffix)]
+			name := path[len(scalePrefix) : len(path)-len(suffix)]
 			body, _ := io.ReadAll(r.Body)
 			var patch struct {
 				Spec struct {
@@ -82,7 +92,7 @@ func TestStatusAndScale(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, "test-token", "qa", srv.Client())
+	c := New(srv.URL, "test-token", ns, srv.Client())
 	ctx := context.Background()
 
 	st, err := c.Status(ctx)
@@ -111,6 +121,9 @@ func TestStatusAndScale(t *testing.T) {
 	}
 	if _, ok := patched["kong-proxy"]; ok {
 		t.Fatal("kong-proxy must not be scaled")
+	}
+	if _, ok := patched["postgres"]; ok {
+		t.Fatal("postgres must not be scaled")
 	}
 
 	st, err = c.SetEnabled(ctx, true)

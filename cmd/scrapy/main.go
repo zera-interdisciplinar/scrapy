@@ -11,7 +11,6 @@ import (
 	"github.com/zera/scrapy/internal/api"
 	"github.com/zera/scrapy/internal/auth"
 	"github.com/zera/scrapy/internal/cluster"
-	"github.com/zera/scrapy/internal/hub"
 	"github.com/zera/scrapy/internal/store"
 	uiassets "github.com/zera/scrapy/ui"
 )
@@ -44,25 +43,15 @@ func main() {
 		go store.StartMirror(ctx, st.Pool, backupDSN, masterKey)
 	}
 
-	h := hub.New()
-	go h.ListenNotify(ctx, st.Pool, func(scopeID, envID string) (string, string, bool) {
-		return st.ResolveNames(ctx, scopeID, envID)
-	})
-
 	uiRoot, err := fs.Sub(uiassets.DistFS, "dist")
 	if err != nil {
 		log.Fatalf("ui embed: %v", err)
 	}
 
-	var qa *cluster.Client
-	if c, err := cluster.InCluster(envOr("QA_NAMESPACE", "qa")); err != nil {
-		log.Printf("qa env control disabled: %v", err)
-	} else {
-		qa = c
-		log.Printf("qa env control enabled for namespace %s", qa.Namespace)
-	}
+	qa := clusterClient(envOr("QA_NAMESPACE", "qa"))
+	prod := clusterClient(envOr("PROD_NAMESPACE", "production"))
 
-	srv := &api.Server{Store: st, Hub: h, SessionKey: sessionKey, UI: http.FS(uiRoot), Cluster: qa}
+	srv := &api.Server{Store: st, SessionKey: sessionKey, UI: http.FS(uiRoot), QA: qa, Prod: prod}
 	router := srv.Routes()
 
 	addr := ":" + envOr("PORT", "8080")
@@ -83,6 +72,16 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+func clusterClient(namespace string) *cluster.Client {
+	c, err := cluster.InCluster(namespace)
+	if err != nil {
+		log.Printf("%s env control disabled: %v", namespace, err)
+		return nil
+	}
+	log.Printf("%s env control enabled", c.Namespace)
+	return c
 }
 
 // seedAdmin creates the default admin user directly in the database if none exists.

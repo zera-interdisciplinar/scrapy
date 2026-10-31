@@ -72,72 +72,53 @@ kubectl create secret generic scrapy-secrets -n production \
    é pior do que não subir").
 2. Secrets acima.
 3. `serviceaccount-qa.yaml` (CI aplica) e, em production, `rbac.yaml`
-   (ServiceAccount `scrapy`). O Role/RoleBinding de scale (`rbac-qa.yaml`) **não**
-   entra no GitHub Actions — a SA de deploy não tem `container.roles.create`.
-   Aplique uma vez com um usuário admin:
-   `kubectl apply -f k8s/rbac-qa.yaml`. Sem isso o toggle **Ambiente QA** da UI
-   responde 403 na API do cluster (o resto do scrapy sobe normalmente).
+   (ServiceAccount `scrapy`). Os Role/RoleBinding de scale (`rbac-qa.yaml` e
+   `rbac-prod.yaml`) **não** entram no GitHub Actions — a SA de deploy não tem
+   `container.roles.create`. Aplique uma vez com um usuário admin:
+   `kubectl apply -f k8s/rbac-qa.yaml` e `kubectl apply -f k8s/rbac-prod.yaml`.
+   Sem o de QA, o toggle do namespace `qa` responde 403. Sem o de production,
+   o toggle de produção responde 403. O resto do scrapy sobe normalmente.
 4. `deployment-qa.yaml` + `service-qa.yaml` (qa) / `deployment.yaml` + `service.yaml`
    (production). Os pods usam `serviceAccountName: scrapy`.
 5. Rota no `infra-gtw-kong` (`manifests/{qa,prod}/scrapy.yaml`).
 
-O scrapy sobe **antes** de qualquer serviço cliente (`ms-inventory`,
-`ms-administrative-core`, ...) que dependa dele no boot — ver fase 5 do plano.
+O consumidor é o app mobile, via Kong (`/v1/boot` e `/v1/flags`, header `apikey`).
 
-## Quem deve apontar para qual deployment do scrapy
+## Dois deployments, bancos isolados
 
-O scrapy tem **dois** deployments (`qa` e `production`), cada um com Postgres próprio e
-isolado — bancos completamente diferentes, não é a mesma fonte de dado filtrada por
-ambiente. Isso existe só pra validar mudança no **código do scrapy** antes de promover pra
-produção (o mesmo padrão de qualquer outro serviço do workspace).
+O scrapy tem **dois** deployments (`qa` e `production`), cada um com Postgres próprio.
+Isso existe só pra validar mudança no **código do scrapy** antes de promover. Não é o
+mesmo dado filtrado por ambiente.
 
-Dentro do scrapy, o ambiente (`qa`/`prod`) já é modelado por entry
-(`entries.env_id` — ver `internal/store/store.go`) e por api key escopada
-(`api_keys.env_id`). Uma única instância — a de **produção** — já serve os dois ambientes:
-uma chave criada com `Env=qa` só enxerga entries `qa`, uma com `Env=prod` só enxerga
-`prod`. O dado é o mesmo Postgres, só filtrado.
+Dentro de uma instância, `qa`/`prod` é o env da entry e da api key: uma chave com
+`Env=qa` só lê entries `qa`. O app de QA e o app de produção podem apontar para a
+mesma instância (a de produção, quando existir) e diferir só no env da key. A
+instância no namespace `qa` é o painel que liga e desliga os namespaces, e o alvo
+do pipeline de CI.
 
-Por isso:
+## Ambientes (ligar / desligar pela UI)
 
-| Quem | Aponta para | Env usado na api key |
-|---|---|---|
-| `ms-x` rodando em `qa` | `scrapy` do namespace **production** | `qa` |
-| `ms-x` rodando em `production` | `scrapy` do namespace **production** | `prod` |
-| Pipeline de CI/QA do **próprio scrapy** | `scrapy-qa` (namespace `qa`) | — (é o alvo do teste, não um consumidor) |
-
-**Nunca** aponte um `ms-x` de `qa` para o `scrapy` do namespace `qa`. Por padrão, resolução
-de DNS interna do k8s prefere o Service do mesmo namespace — se o Helm chart de um serviço
-cliente não fixar explicitamente o host/namespace do scrapy de produção, ele cai nessa
-armadilha silenciosamente: passa a ler de um banco isolado, sem sincronia com produção,
-sem alertar ninguém. O sintoma é "kill switch/flag mudou no admin mas o serviço não
-percebeu" — porque o serviço nunca estava lendo do banco onde a mudança foi feita.
-
-Configure o host do scrapy nos manifests de `ms-x` como o FQDN completo do Service em
-`production` (ex: `scrapy.production.svc.cluster.local`), nunca `scrapy` puro.
-
-## Ambiente QA (ligar / desligar pela UI)
-
-A tela **Sistema → Ambiente QA** escala todos os Deployments do namespace `qa` para
-`0` (desligar) ou `1` (ligar). Ficam de fora, de propósito:
+A tela **Sistema → Ambientes** escala os Deployments de um namespace para `0`
+(desligar) ou `1` (ligar). Há um card para `qa` e outro para `production`.
+Ligar sempre volta para **1** réplica — um Deployment que rodava com mais de uma
+não recupera a contagem anterior. Ficam de fora, de propósito, nos dois namespaces:
 
 - `scrapy` e qualquer nome `scrapy-*` (inclui `scrapy-postgres` — sem o banco a UI morre)
-- `postgres` (é o banco do Kong neste cluster: `postgres.qa.svc` — scale-to-0 derruba o IP público)
+- `postgres` (em `qa` é o banco do Kong: `postgres.qa.svc` — scale-to-0 derruba o IP público)
 - qualquer Deployment cujo nome contenha `kong` (o gateway precisa continuar no ar)
 
 Desligar o QA esvazia o namespace; o Autopilot então tenta empacotar o que sobrou.
 `scrapy` e `scrapy-postgres` levam `safe-to-evict: "false"` e PDB `minAvailable: 1`
 para não serem evictados — senão o PVC RWO do postgres descola, o pod fica
-Pending, e a UI some depois de alguns minutos (o `/v1/healthz` não checa o banco).
+Pending. `/v1/healthz` responde 503 se o Postgres não responder.
 
-O toggle só funciona com o scrapy **dentro do cluster** (ServiceAccount + Role).
-O CI cria o ServiceAccount; o Role em `rbac-qa.yaml` precisa de um apply manual
-uma vez (`kubectl apply -f k8s/rbac-qa.yaml`) com um principal que pode criar
-RBAC. Em docker compose local a API responde 503. Só o papel `admin` pode
-mudar o estado; viewer/editor só lêem.
-
-A instância de production também recebe a Role via RoleBinding em `qa`, porque é ela
-que os operadores usam no dia a dia. Aplique `k8s/rbac.yaml` no namespace `production`
-antes do primeiro toggle a partir dessa UI.
+O painel que opera os dois namespaces é o scrapy do namespace `qa`. O toggle só
+funciona com esse pod **dentro do cluster** (ServiceAccount + Role). O CI cria o
+ServiceAccount; `rbac-qa.yaml` e `rbac-prod.yaml` precisam de um apply manual
+uma vez, com um principal que pode criar RBAC. O Role de produção autoriza
+`system:serviceaccount:qa:scrapy` a listar e escalar Deployments em `production`.
+Em docker compose local a API responde 503. Só o papel `admin` pode mudar o
+estado; viewer/editor só lêem.
 
 ## Por que não StatefulSet para o Postgres
 

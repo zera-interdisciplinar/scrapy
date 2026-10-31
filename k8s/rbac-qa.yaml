@@ -2,8 +2,9 @@
 # environment to 0/1. GitHub Actions cannot create Roles in this cluster —
 # apply this file once with a principal that has container.roles.create.
 #
-# The Role stays in qa; both the qa and production ServiceAccounts bind to it
-# (production scrapy is the operator UI).
+# The Role stays in qa. The operator UI is the scrapy ServiceAccount in qa.
+# The production ServiceAccount binding is kept so a future production pod can
+# read the same namespace.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

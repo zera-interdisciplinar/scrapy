@@ -62,9 +62,8 @@ const OP_LABELS = {
   in: "está na lista",
 };
 
-// Só flags e conteúdo têm segmentação — são os únicos tipos que o app mobile mostra pra
-// usuário final via /v1/evaluate. Env (string/number/json) é config de serviço, não faz
-// sentido "segmentar" um timeout por país.
+// Só flags e conteúdo têm segmentação — o app resolve isso em /v1/flags.
+// Env (string/number/json) é config de boot (/v1/boot, boot_only), sem usuário ainda.
 function supportsSegmentation(entryType) {
   return entryType === "bool" || entryType === "markdown";
 }
@@ -522,7 +521,7 @@ function EntryTable({ entries, scope, env, onSaved, emptyLabel }) {
   );
 }
 
-function Sidebar({ scopes, activeScope, onSelect, onAddScope, panel, onShowAudit, onShowQa, onLogout }) {
+function Sidebar({ scopes, activeScope, onSelect, onAddScope, panel, onShowAudit, onShowEnvs, onLogout }) {
   const [draft, setDraft] = useState("");
 
   function add() {
@@ -535,7 +534,7 @@ function Sidebar({ scopes, activeScope, onSelect, onAddScope, panel, onShowAudit
   return (
     <aside className="sidebar">
       <Logo />
-      <div className="sidebar-section-title">Serviços</div>
+      <div className="sidebar-section-title">Apps</div>
       {scopes.map((s) => (
         <button
           key={s}
@@ -550,14 +549,14 @@ function Sidebar({ scopes, activeScope, onSelect, onAddScope, panel, onShowAudit
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && add()}
-          placeholder="novo serviço"
+          placeholder="novo app"
         />
         <button className="btn btn-ghost" onClick={add}>+</button>
       </div>
 
       <div className="sidebar-section-title">Sistema</div>
-      <button className={`scope-item${panel === "qa" ? " active" : ""}`} onClick={onShowQa}>
-        Ambiente QA
+      <button className={`scope-item${panel === "envs" ? " active" : ""}`} onClick={onShowEnvs}>
+        Ambientes
       </button>
       <button className={`scope-item${panel === "audit" ? " active" : ""}`} onClick={onShowAudit}>
         Auditoria
@@ -572,7 +571,7 @@ function Sidebar({ scopes, activeScope, onSelect, onAddScope, panel, onShowAudit
   );
 }
 
-function QaEnvView({ canToggle }) {
+function EnvControl({ title, namespace, offLabel, onLabel, confirmOff, confirmOn, loadStatus, setEnabled, canToggle }) {
   const [status, setStatus] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -580,7 +579,7 @@ function QaEnvView({ canToggle }) {
   async function load() {
     setErr("");
     try {
-      setStatus(await api.qaEnv());
+      setStatus(await loadStatus());
     } catch (e) {
       setStatus(null);
       setErr(e.message);
@@ -591,14 +590,11 @@ function QaEnvView({ canToggle }) {
 
   async function toggle() {
     const next = !status.enabled;
-    const msg = next
-      ? "Ligar o ambiente QA? Os serviços do namespace qa voltam para 1 réplica (scrapy e kong ficam como estão)."
-      : "Desligar o ambiente QA? Todos os serviços do namespace qa vão para 0 réplicas, exceto scrapy, o postgres dele e o kong.";
-    if (!confirm(msg)) return;
+    if (!confirm(next ? confirmOn : confirmOff)) return;
     setBusy(true);
     setErr("");
     try {
-      setStatus(await api.setQaEnv(next));
+      setStatus(await setEnabled(next));
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -607,15 +603,16 @@ function QaEnvView({ canToggle }) {
   }
 
   return (
-    <div>
-      <div className="main-title" style={{ marginBottom: 16 }}>Ambiente QA</div>
+    <section style={{ marginBottom: 28 }}>
+      <div className="main-title" style={{ marginBottom: 16 }}>{title}</div>
       <div className={`env-banner ${status?.enabled ? "qa" : "prod"}`}>
-        {status?.enabled ? "namespace qa ligado" : "namespace qa desligado (ou inacessível)"}
+        {status?.enabled ? `namespace ${namespace} ligado` : `namespace ${namespace} desligado (ou inacessível)`}
       </div>
       <p className="msg-pill" style={{ display: "block", marginBottom: 16, lineHeight: 1.5 }}>
-        Liga e desliga os Deployments do namespace <code>qa</code>. Scrapy, o banco do scrapy
-        e qualquer Deployment com &quot;kong&quot; no nome não são escalados — senão não dá
-        para ligar de volta pela UI.
+        Liga e desliga os Deployments do namespace <code>{namespace}</code>. Ficam de fora
+        scrapy, qualquer <code>scrapy-*</code>, o Deployment <code>postgres</code> e qualquer
+        nome com &quot;kong&quot;. Ligar volta cada um para <strong>1</strong> réplica — não
+        restaura uma contagem maior que isso.
       </p>
       <div className="toolbar">
         <button className="btn btn-ghost" onClick={load} disabled={busy}>recarregar</button>
@@ -626,7 +623,7 @@ function QaEnvView({ canToggle }) {
             onClick={toggle}
             disabled={busy}
           >
-            {status.enabled ? "desligar QA" : "ligar QA"}
+            {status.enabled ? offLabel : onLabel}
           </button>
         )}
         {!canToggle && (
@@ -654,8 +651,37 @@ function QaEnvView({ canToggle }) {
           </tbody>
         </table>
       ) : !err ? (
-        <div className="empty-state">Nenhum Deployment listado no namespace qa.</div>
+        <div className="empty-state">Nenhum Deployment listado no namespace {namespace}.</div>
       ) : null}
+    </section>
+  );
+}
+
+function AmbientesView({ canToggle }) {
+  return (
+    <div>
+      <EnvControl
+        title="QA"
+        namespace="qa"
+        offLabel="desligar QA"
+        onLabel="ligar QA"
+        confirmOff="Desligar o ambiente QA? Todos os serviços do namespace qa vão para 0 réplicas, exceto scrapy, scrapy-*, postgres e kong."
+        confirmOn="Ligar o ambiente QA? Os serviços do namespace qa voltam para 1 réplica cada (não restaura contagens maiores). scrapy, postgres e kong ficam como estão."
+        loadStatus={api.qaEnv}
+        setEnabled={api.setQaEnv}
+        canToggle={canToggle}
+      />
+      <EnvControl
+        title="Produção"
+        namespace="production"
+        offLabel="desligar produção"
+        onLabel="ligar produção"
+        confirmOff="Desligar PRODUÇÃO? Todos os Deployments do namespace production vão para 0 réplicas, exceto scrapy, scrapy-*, postgres e qualquer nome com kong. Isso derruba os serviços de produção."
+        confirmOn="Ligar PRODUÇÃO? Os Deployments do namespace production voltam para 1 réplica cada. Não restaura contagens maiores que 1. scrapy, postgres e kong ficam como estão."
+        loadStatus={api.prodEnv}
+        setEnabled={api.setProdEnv}
+        canToggle={canToggle}
+      />
     </div>
   );
 }
@@ -703,7 +729,7 @@ function Dashboard({ role, onLogout }) {
   const [tab, setTab] = useState("env"); // "env" | "flags" | "content"
   const [entries, setEntries] = useState([]);
   const [msg, setMsg] = useState("");
-  const [panel, setPanel] = useState("scope"); // "scope" | "audit" | "qa"
+  const [panel, setPanel] = useState("scope"); // "scope" | "audit" | "envs"
 
   useEffect(() => {
     api.listScopes().then((res) => {
@@ -751,18 +777,18 @@ function Dashboard({ role, onLogout }) {
         onAddScope={addScope}
         panel={panel}
         onShowAudit={() => setPanel("audit")}
-        onShowQa={() => setPanel("qa")}
+        onShowEnvs={() => setPanel("envs")}
         onLogout={onLogout}
       />
       <main className={`main${isProd && panel === "scope" ? " env-prod" : ""}`}>
         {panel === "audit" ? (
           <AuditView />
-        ) : panel === "qa" ? (
-          <QaEnvView canToggle={role === "admin"} />
+        ) : panel === "envs" ? (
+          <AmbientesView canToggle={role === "admin"} />
         ) : (
         <>
         <div className="main-header">
-          <div className="main-title">{scope || "selecione um serviço"}</div>
+          <div className="main-title">{scope || "selecione um app"}</div>
           <div className="env-pills">
             {envs.map((e) => (
               <button
