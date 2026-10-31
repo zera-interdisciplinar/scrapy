@@ -514,7 +514,7 @@ function EntryTable({ entries, scope, env, onSaved, emptyLabel }) {
       </thead>
       <tbody>
         {entries.map((e) => (
-          <EntryRow key={e.key} entry={e} scope={scope} env={env} onSaved={onSaved} />
+          <EntryRow key={`${env}:${e.key}`} entry={e} scope={scope} env={env} onSaved={onSaved} />
         ))}
       </tbody>
     </table>
