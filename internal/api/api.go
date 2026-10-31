@@ -129,7 +129,7 @@ func (s *Server) sessionAuth(minRole string) gin.HandlerFunc {
 
 // requireScopeAccess blocks editors/admins from writing to a scope outside their
 // allowed_scopes list. nil/empty list means unrestricted (the bootstrap admin, or an
-// operator who legitimately needs cross-service access).
+// operator who legitimately needs access to every app).
 func (s *Server) requireScopeAccess(c *gin.Context, scope string) bool {
 	allowed, err := s.Store.AllowedScopes(c.Request.Context(), c.GetString("uid"))
 	if err != nil {
@@ -148,8 +148,8 @@ func (s *Server) requireScopeAccess(c *gin.Context, scope string) bool {
 	return false
 }
 
-// apiKeyAuth authenticates SDK calls. Keys are read-only by construction: there is no
-// write endpoint behind this middleware.
+// apiKeyAuth authenticates mobile boot/flags calls. Keys are read-only by construction:
+// there is no write endpoint behind this middleware.
 //
 // Reads the key from the `apikey` header — same header/name Kong's key-auth plugin expects
 // at the gateway, so both layers check the same credential the client actually sends.

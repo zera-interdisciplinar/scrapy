@@ -94,7 +94,10 @@ Dentro de uma instância, `qa`/`prod` é o env da entry e da api key: uma chave 
 `Env=qa` só lê entries `qa`. O app de QA e o app de produção podem apontar para a
 mesma instância (a de produção, quando existir) e diferir só no env da key. A
 instância no namespace `qa` é o painel que liga e desliga os namespaces, e o alvo
-do pipeline de CI.
+do pipeline de CI (`deploy-qa.yml` no push em `qa`). Produção sobe com
+`deploy-prod.yml` no push em `main`: substitui `IMAGE_TAG` por `prod-<sha>`,
+aplica ServiceAccount (`rbac.yaml`), Deployment e Service, e espera o rollout.
+`rbac-prod.yaml` continua apply manual.
 
 ## Ambientes (ligar / desligar pela UI)
 
@@ -102,7 +105,8 @@ A tela **Sistema → Ambientes** escala os Deployments de um namespace para `0`
 (desligar) ou `1` (ligar). Há um card para `qa` e outro para `production`.
 Ligar sempre volta para **1** réplica — um Deployment que rodava com mais de uma
 não recupera a contagem anterior. No card de **produção**, cada serviço não
-protegido tem um campo de réplicas (0–20) além do ligar/desligar do namespace.
+protegido tem um campo de réplicas (0–20): `PUT /v1/admin/prod-env/scale`
+(`{ "name", "replicas" }`), além do ligar/desligar do namespace.
 Ficam de fora, de propósito, nos dois namespaces:
 
 - `scrapy` e qualquer nome `scrapy-*` (inclui `scrapy-postgres` — sem o banco a UI morre)
