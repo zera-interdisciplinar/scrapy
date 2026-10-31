@@ -26,7 +26,7 @@ spec:
       serviceAccountName: scrapy
       containers:
       - name: scrapy
-        image: southamerica-east1-docker.pkg.dev/zera-509513/repo/scrapy:IMAGE_TAG
+        image: southamerica-east1-docker.pkg.dev/zera-512810/repo/scrapy:IMAGE_TAG
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
