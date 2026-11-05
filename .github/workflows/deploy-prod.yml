@@ -30,7 +30,7 @@ jobs:
         with:
           cluster_name: zera-cluster
           location: southamerica-east1-a
-          use_dns_endpoint: true
+          use_dns_based_endpoint: true
 
       - name: Setup Go
         uses: actions/setup-go@v5
