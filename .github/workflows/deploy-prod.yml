@@ -7,7 +7,7 @@ on:
 
 env:
   REGISTRY: southamerica-east1-docker.pkg.dev
-  IMAGE: southamerica-east1-docker.pkg.dev/zera-512810/repo/scrapy
+  IMAGE: southamerica-east1-docker.pkg.dev/zeratech-prod/repo/scrapy
 
 jobs:
   deploy:
@@ -23,13 +23,14 @@ jobs:
       - id: auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: projects/659911714707/locations/global/workloadIdentityPools/zera-pool/providers/github-provider
-          service_account: github-actions-deploy@zera-512810.iam.gserviceaccount.com
+          workload_identity_provider: projects/807123505044/locations/global/workloadIdentityPools/zera-pool/providers/github-provider
+          service_account: github-actions-deploy@zeratech-prod.iam.gserviceaccount.com
 
       - uses: google-github-actions/get-gke-credentials@v2
         with:
           cluster_name: zera-cluster
-          location: southamerica-east1
+          location: southamerica-east1-a
+          use_dns_endpoint: true
 
       - name: Setup Go
         uses: actions/setup-go@v5

@@ -7,7 +7,7 @@ on:
 
 env:
   REGISTRY: southamerica-east1-docker.pkg.dev
-  IMAGE: southamerica-east1-docker.pkg.dev/zera-512810/repo/scrapy
+  IMAGE: southamerica-east1-docker.pkg.dev/zeratech-prod/repo/scrapy
 
 jobs:
   deploy:
@@ -29,7 +29,8 @@ jobs:
       - uses: google-github-actions/get-gke-credentials@v2
         with:
           cluster_name: zera-cluster
-          location: southamerica-east1
+          location: southamerica-east1-a
+          use_dns_endpoint: true
 
       - name: Setup Go
         uses: actions/setup-go@v5
